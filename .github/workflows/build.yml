@@ -25,13 +25,21 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: Download VAE model (optional)
+      - name: Download VAE Model
         continue-on-error: true
         run: |
           mkdir -p app/src/main/assets/models
           curl -L -f -o app/src/main/assets/models/causal_video_vae_decoder.tflite \
             "https://huggingface.co/litert-community/Neo_Dragon/resolve/main/causal_video_vae_decoder.tflite" \
-            || echo "Model download skipped"
+            || echo "VAE download skipped"
+
+      - name: Download Text Encoder Model
+        continue-on-error: true
+        run: |
+          mkdir -p app/src/main/assets/models
+          curl -L -f -o app/src/main/assets/models/dt5_text_encoder.tflite \
+            "https://huggingface.co/litert-community/Neo_Dragon/resolve/main/dt5_text_encoder.tflite" \
+            || echo "Text Encoder download skipped"
 
       - name: Make gradlew executable
         run: chmod +x gradlew || true
