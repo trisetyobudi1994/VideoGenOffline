@@ -33,13 +33,27 @@ jobs:
             "https://huggingface.co/litert-community/Neo_Dragon/resolve/main/causal_video_vae_decoder.tflite" \
             || echo "VAE download skipped"
 
-      - name: Download Text Encoder Model
+      - name: Download and Convert Text Encoder & Tokenizer
         continue-on-error: true
         run: |
           mkdir -p app/src/main/assets/models
+          # Download model dt5
           curl -L -f -o app/src/main/assets/models/dt5_text_encoder.tflite \
             "https://huggingface.co/litert-community/Neo_Dragon/resolve/main/dt5_text_encoder.tflite" \
-            || echo "Text Encoder download skipped"
+            || echo "Text encoder download skipped"
+          
+          # Download file spiece.model
+          curl -L -f -o app/src/main/assets/models/t5_spiece.model \
+            "https://huggingface.co/litert-community/Neo_Dragon/resolve/main/t5_spiece.model" \
+            || echo "Spiece model download skipped"
+
+          # Konversi ke tokenizer.json menggunakan Python
+          pip install tokenizers sentencepiece
+          python -c "
+          from tokenizers import SentencePieceUnigramTokenizer
+          tokenizer = SentencePieceUnigramTokenizer.from_file('app/src/main/assets/models/t5_spiece.model')
+          tokenizer.save('app/src/main/assets/models/tokenizer.json')
+          "
 
       - name: Make gradlew executable
         run: chmod +x gradlew || true
