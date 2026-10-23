@@ -6,10 +6,6 @@ import java.io.FileInputStream
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 
-/**
- * Loader untuk satu model .tflite di folder assets.
- * Memakai TensorFlow Lite Interpreter (stabil & terdokumentasi).
- */
 class LiteRtLoader(context: Context, assetPath: String) {
 
     private val interpreter: Interpreter
@@ -28,6 +24,30 @@ class LiteRtLoader(context: Context, assetPath: String) {
             fd.startOffset,
             fd.declaredLength
         )
+    }
+
+    // Fungsi baru: Membaca struktur input model
+    fun getInputTensorInfo(): String {
+        val sb = StringBuilder()
+        for (i in 0 until interpreter.inputTensorCount) {
+            val tensor = interpreter.getInputTensor(i)
+            sb.append("Input $i: ${tensor.name()}\n")
+            sb.append("  Shape: ${tensor.shape().contentToString()}\n")
+            sb.append("  Type: ${tensor.dataType()}\n\n")
+        }
+        return sb.toString()
+    }
+
+    // Fungsi baru: Membaca struktur output model
+    fun getOutputTensorInfo(): String {
+        val sb = StringBuilder()
+        for (i in 0 until interpreter.outputTensorCount) {
+            val tensor = interpreter.getOutputTensor(i)
+            sb.append("Output $i: ${tensor.name()}\n")
+            sb.append("  Shape: ${tensor.shape().contentToString()}\n")
+            sb.append("  Type: ${tensor.dataType()}\n\n")
+        }
+        return sb.toString()
     }
 
     fun close() = interpreter.close()
