@@ -8,8 +8,6 @@ class TokenizerHelper(context: Context) {
     private val tokenizer: HuggingFaceTokenizer
 
     init {
-        // Android tidak bisa membaca file JSON langsung dari assets, 
-        // jadi kita salin dulu ke cacheDir sementara.
         val file = File(context.cacheDir, "tokenizer.json")
         if (!file.exists()) {
             context.assets.open("models/tokenizer.json").use { input ->
@@ -22,24 +20,26 @@ class TokenizerHelper(context: Context) {
     }
 
     /**
-     * Mengubah teks menjadi IDs (128) dan Mask (128)
+     * Mengubah teks menjadi IDs (128) dan Mask (128) dalam bentuk IntArray
      */
     fun encode(text: String): Pair<IntArray, IntArray> {
         val encoding = tokenizer.encode(text)
-        var ids = encoding.ids
-        var mask = encoding.attentionMask
+        val rawIds = encoding.ids          // Ini bertipe LongArray
+        val rawMask = encoding.attentionMask // Ini bertipe LongArray
 
         val targetLength = 128
-        // Potong jika kepanjangan
-        if (ids.size > targetLength) {
-            ids = ids.copyOf(targetLength)
-            mask = mask.copyOf(targetLength)
-        } 
-        // Tambahkan padding (0) jika terlalu pendek
-        else if (ids.size < targetLength) {
-            val padLength = targetLength - ids.size
-            ids = ids + IntArray(padLength) { 0 }
-            mask = mask + IntArray(padLength) { 0 }
+        
+        // Siapkan array dengan ukuran 128 dan isi default 0 (padding)
+        val ids = IntArray(targetLength) { 0 }
+        val mask = IntArray(targetLength) { 0 }
+
+        // Berapa banyak yang akan disalin? (Maksimal 128)
+        val copyLength = if (rawIds.size > targetLength) targetLength else rawIds.size
+
+        // Salin dan konversi dari Long ke Int
+        for (i in 0 until copyLength) {
+            ids[i] = rawIds[i].toInt()
+            mask[i] = rawMask[i].toInt()
         }
 
         return Pair(ids, mask)
