@@ -20,94 +20,89 @@ class MainActivity : AppCompatActivity() {
         }
 
         val title = TextView(this).apply {
-            text = "VideoGenOffline — Fase 3"
+            text = "VideoGenOffline — Fase 4 (Encoder)"
             textSize = 20f
         }
 
-        // --- TOMBOL 1: VAE ---
         val btnTestVae = Button(this).apply {
             text = "1. Test Load VAE"
             setOnClickListener {
                 try {
-                    val loader = LiteRtLoader(
-                        this@MainActivity,
-                        "models/causal_video_vae_decoder.tflite"
-                    )
-                    Toast.makeText(
-                        this@MainActivity,
-                        "VAE decoder berhasil dimuat",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    val loader = LiteRtLoader(this@MainActivity, "models/causal_video_vae_decoder.tflite")
+                    Toast.makeText(this@MainActivity, "VAE berhasil dimuat", Toast.LENGTH_SHORT).show()
                     loader.close()
                 } catch (e: Exception) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Gagal VAE: ${e.message}",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    Toast.makeText(this@MainActivity, "Gagal VAE: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
 
-        // --- TOMBOL 2: TEXT ENCODER ---
         val btnTestText = Button(this).apply {
-            text = "2. Test Load Text Encoder (dt5)"
+            text = "2. Test Load Text Encoder"
             setOnClickListener {
                 try {
-                    val loader = LiteRtLoader(
-                        this@MainActivity,
-                        "models/dt5_text_encoder.tflite"
-                    )
-                    val info =
-                        "INPUT:\n${loader.getInputTensorInfo()}\n\nOUTPUT:\n${loader.getOutputTensorInfo()}"
-                    AlertDialog.Builder(this@MainActivity)
-                        .setTitle("Text Encoder Tensor Info")
-                        .setMessage(info)
-                        .setPositiveButton("OK", null)
-                        .show()
+                    val loader = LiteRtLoader(this@MainActivity, "models/dt5_text_encoder.tflite")
+                    val info = "INPUT:\n${loader.getInputTensorInfo()}\nOUTPUT:\n${loader.getOutputTensorInfo()}"
+                    AlertDialog.Builder(this@MainActivity).setTitle("Info").setMessage(info).setPositiveButton("OK", null).show()
                     loader.close()
                 } catch (e: Exception) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Gagal: ${e.message}",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    Toast.makeText(this@MainActivity, "Gagal: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
 
-        // --- TOMBOL 3: TOKENIZER ---
         val btnTestToken = Button(this).apply {
             text = "3. Test Tokenizer (Teks ke Angka)"
             setOnClickListener {
                 try {
                     val tokenizer = TokenizerHelper(this@MainActivity)
-                    val prompt = "a cat walking"
-                    val (ids, mask) = tokenizer.encode(prompt)
+                    val (ids, _) = tokenizer.encode("a cat walking")
+                    val resultText = "IDs (10 pertama):\n${ids.take(10).joinToString(", ")}...\n\nTotal: ${ids.size}"
+                    AlertDialog.Builder(this@MainActivity).setTitle("Hasil Tokenizer").setMessage(resultText).setPositiveButton("OK", null).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this@MainActivity, "Gagal: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
 
-                    val nonZeroIds = ids.filter { it != 0 }
-                    val resultText = buildString {
-                        append("Teks: '$prompt'\n\n")
-                        append("IDs (10 pertama):\n")
-                        append(ids.take(10).joinToString(", "))
-                        append("\n\nMask (10 pertama):\n")
-                        append(mask.take(10).joinToString(", "))
-                        append("\n\nTotal ID: ${ids.size} (harus 128)")
-                        append("\nToken bukan-0: ${nonZeroIds.size}")
-                        append("\nID terakhir bukan-0: ${nonZeroIds.lastOrNull() ?: "-"}")
-                    }
+        // TOMBOL BARU: UJI TEXT ENCODER (EMBEDDING)
+        val btnRunEncoder = Button(this).apply {
+            text = "4. JALANKAN AI (Teks -> Makna)"
+            setOnClickListener {
+                try {
+                    // 1. Ubah teks jadi angka
+                    val tokenizer = TokenizerHelper(this@MainActivity)
+                    val (ids, mask) = tokenizer.encode("a cat walking")
+                    
+                    // 2. Muat model AI
+                    val loader = LiteRtLoader(this@MainActivity, "models/dt5_text_encoder.tflite")
+                    
+                    // 3. Jalankan AI
+                    Toast.makeText(this@MainActivity, "AI sedang berpikir...", Toast.LENGTH_SHORT).show()
+                    val startTime = System.currentTimeMillis()
+                    
+                    val embedding = loader.runTextEncoder(ids, mask)
+                    
+                    val endTime = System.currentTimeMillis()
+                    val duration = endTime - startTime
+                    
+                    loader.close()
+
+                    // 4. Tampilkan hasilnya
+                    val resultText = "Berhasil!\n\n" +
+                            "Waktu proses: $duration ms\n" +
+                            "Ukuran output: ${embedding.size} angka (Harusnya 524.288)\n\n" +
+                            "Contoh 5 angka pertama:\n" +
+                            embedding.take(5).joinToString(", ")
 
                     AlertDialog.Builder(this@MainActivity)
-                        .setTitle("Hasil Tokenizer")
+                        .setTitle("Hasil AI (Embedding)")
                         .setMessage(resultText)
                         .setPositiveButton("OK", null)
                         .show()
+
                 } catch (e: Exception) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Gagal Tokenizer: ${e.message}",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    Toast.makeText(this@MainActivity, "Gagal AI: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -116,6 +111,7 @@ class MainActivity : AppCompatActivity() {
         layout.addView(btnTestVae)
         layout.addView(btnTestText)
         layout.addView(btnTestToken)
+        layout.addView(btnRunEncoder)
         setContentView(layout)
     }
 }
