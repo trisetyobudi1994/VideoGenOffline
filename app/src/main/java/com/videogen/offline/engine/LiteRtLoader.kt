@@ -57,8 +57,8 @@ class LiteRtLoader(context: Context, assetPath: String) {
         val outputSize = 1 * 128 * 4096
         val outputBuffer = ByteBuffer.allocateDirect(outputSize * 4).order(ByteOrder.nativeOrder())
 
-        // 4. Masukkan ke dalam Map untuk dijalankan
-        val inputs = mapOf(0 to idBuffer, 1 to maskBuffer)
+        // 4. PERBAIKAN: Input pakai Array, Output pakai Map
+        val inputs = arrayOf<Any>(idBuffer, maskBuffer)
         val outputs = mapOf(0 to outputBuffer)
 
         // 5. Jalankan inferensi
