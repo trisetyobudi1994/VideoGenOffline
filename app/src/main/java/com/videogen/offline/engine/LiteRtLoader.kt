@@ -43,20 +43,19 @@ class LiteRtLoader(context: Context, assetPath: String) {
         return sb.toString()
     }
 
-    // FUNGSI BARU: Fase 4 (Menjalankan Text Encoder secara Dinamis)
     fun runTextEncoder(ids: IntArray, mask: IntArray): FloatArray {
         val inputTensor0 = interpreter.getInputTensor(0)
         val inputTensor1 = interpreter.getInputTensor(1)
 
-        // 1. Alokasikan buffer sesuai ukuran ASLI yang diminta model
+        // 1. Alokasi buffer input
         val idBuffer = ByteBuffer.allocateDirect(inputTensor0.numBytes()).order(ByteOrder.nativeOrder())
         val maskBuffer = ByteBuffer.allocateDirect(inputTensor1.numBytes()).order(ByteOrder.nativeOrder())
 
-        // 2. Isi buffer ID (Cek apakah model minta INT32 atau FLOAT32)
+        // Isi buffer ID
         if (inputTensor0.dataType() == DataType.INT32) {
             val ib = idBuffer.asIntBuffer()
             for (i in 0 until ib.capacity()) {
-                ib.put(if (i < ids.size) ids[i] else 0) // Isi 0 jika array kita lebih pendek
+                ib.put(if (i < ids.size) ids[i] else 0)
             }
         } else if (inputTensor0.dataType() == DataType.FLOAT32) {
             val fb = idBuffer.asFloatBuffer()
@@ -65,7 +64,7 @@ class LiteRtLoader(context: Context, assetPath: String) {
             }
         }
 
-        // 3. Isi buffer Mask
+        // Isi buffer Mask
         if (inputTensor1.dataType() == DataType.INT32) {
             val ib = maskBuffer.asIntBuffer()
             for (i in 0 until ib.capacity()) {
@@ -78,18 +77,25 @@ class LiteRtLoader(context: Context, assetPath: String) {
             }
         }
 
-        // 4. Siapkan Output
+        // 2. HITUNG UKURAN OUTPUT SECARA MANUAL
         val outputTensor = interpreter.getOutputTensor(0)
-        val outputBuffer = ByteBuffer.allocateDirect(outputTensor.numBytes()).order(ByteOrder.nativeOrder())
+        val shape = outputTensor.shape() // [1, 128, 4096]
+        var outputSize = 1
+        for (dim in shape) {
+            outputSize *= dim
+        }
 
-        // 5. Jalankan
+        // Alokasikan buffer output berdasarkan hitungan manual (FLOAT32 = 4 bytes)
+        val outputBuffer = ByteBuffer.allocateDirect(outputSize * 4).order(ByteOrder.nativeOrder())
+
+        // 3. Jalankan
         val inputs = arrayOf<Any>(idBuffer, maskBuffer)
         val outputs = mapOf(0 to outputBuffer)
         interpreter.runForMultipleInputsOutputs(inputs, outputs)
 
-        // 6. Ambil hasilnya
+        // 4. Ambil hasilnya
         val floatBuffer = outputBuffer.asFloatBuffer()
-        val result = FloatArray(floatBuffer.capacity())
+        val result = FloatArray(outputSize)
         floatBuffer.get(result)
         
         return result
