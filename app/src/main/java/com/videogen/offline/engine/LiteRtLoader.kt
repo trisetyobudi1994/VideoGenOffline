@@ -1,6 +1,7 @@
 package com.videogen.offline.engine
 
 import android.content.Context
+import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 import java.io.FileInputStream
 import java.nio.ByteBuffer
@@ -24,7 +25,6 @@ class LiteRtLoader(context: Context, assetPath: String) {
         return channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
     }
 
-    // Fungsi untuk Fase 2 (Info Tensor)
     fun getInputTensorInfo(): String {
         val sb = StringBuilder()
         for (i in 0 until interpreter.inputTensorCount) {
@@ -43,30 +43,53 @@ class LiteRtLoader(context: Context, assetPath: String) {
         return sb.toString()
     }
 
-    // FUNGSI BARU: Fase 4 (Menjalankan Text Encoder)
+    // FUNGSI BARU: Fase 4 (Menjalankan Text Encoder secara Dinamis)
     fun runTextEncoder(ids: IntArray, mask: IntArray): FloatArray {
-        // 1. Siapkan buffer untuk input IDs (1, 128) tipe INT32
-        val idBuffer = ByteBuffer.allocateDirect(1 * 128 * 4).order(ByteOrder.nativeOrder())
-        idBuffer.asIntBuffer().put(ids)
+        val inputTensor0 = interpreter.getInputTensor(0)
+        val inputTensor1 = interpreter.getInputTensor(1)
 
-        // 2. Siapkan buffer untuk input Mask (1, 128) tipe INT32
-        val maskBuffer = ByteBuffer.allocateDirect(1 * 128 * 4).order(ByteOrder.nativeOrder())
-        maskBuffer.asIntBuffer().put(mask)
+        // 1. Alokasikan buffer sesuai ukuran ASLI yang diminta model
+        val idBuffer = ByteBuffer.allocateDirect(inputTensor0.numBytes()).order(ByteOrder.nativeOrder())
+        val maskBuffer = ByteBuffer.allocateDirect(inputTensor1.numBytes()).order(ByteOrder.nativeOrder())
 
-        // 3. Siapkan buffer untuk output (1, 128, 4096) tipe FLOAT32
-        val outputSize = 1 * 128 * 4096
-        val outputBuffer = ByteBuffer.allocateDirect(outputSize * 4).order(ByteOrder.nativeOrder())
+        // 2. Isi buffer ID (Cek apakah model minta INT32 atau FLOAT32)
+        if (inputTensor0.dataType() == DataType.INT32) {
+            val ib = idBuffer.asIntBuffer()
+            for (i in 0 until ib.capacity()) {
+                ib.put(if (i < ids.size) ids[i] else 0) // Isi 0 jika array kita lebih pendek
+            }
+        } else if (inputTensor0.dataType() == DataType.FLOAT32) {
+            val fb = idBuffer.asFloatBuffer()
+            for (i in 0 until fb.capacity()) {
+                fb.put(if (i < ids.size) ids[i].toFloat() else 0f)
+            }
+        }
 
-        // 4. PERBAIKAN: Input pakai Array, Output pakai Map
+        // 3. Isi buffer Mask
+        if (inputTensor1.dataType() == DataType.INT32) {
+            val ib = maskBuffer.asIntBuffer()
+            for (i in 0 until ib.capacity()) {
+                ib.put(if (i < mask.size) mask[i] else 0)
+            }
+        } else if (inputTensor1.dataType() == DataType.FLOAT32) {
+            val fb = maskBuffer.asFloatBuffer()
+            for (i in 0 until fb.capacity()) {
+                fb.put(if (i < mask.size) mask[i].toFloat() else 0f)
+            }
+        }
+
+        // 4. Siapkan Output
+        val outputTensor = interpreter.getOutputTensor(0)
+        val outputBuffer = ByteBuffer.allocateDirect(outputTensor.numBytes()).order(ByteOrder.nativeOrder())
+
+        // 5. Jalankan
         val inputs = arrayOf<Any>(idBuffer, maskBuffer)
         val outputs = mapOf(0 to outputBuffer)
-
-        // 5. Jalankan inferensi
         interpreter.runForMultipleInputsOutputs(inputs, outputs)
 
-        // 6. Ambil hasilnya dalam bentuk FloatArray
+        // 6. Ambil hasilnya
         val floatBuffer = outputBuffer.asFloatBuffer()
-        val result = FloatArray(outputSize)
+        val result = FloatArray(floatBuffer.capacity())
         floatBuffer.get(result)
         
         return result
