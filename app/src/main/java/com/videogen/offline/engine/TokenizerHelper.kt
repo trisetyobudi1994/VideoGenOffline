@@ -19,29 +19,10 @@ class TokenizerHelper(context: Context) {
         tokenizer = HuggingFaceTokenizer.newInstance(file.toPath())
     }
 
-    /**
-     * Mengubah teks menjadi IDs (128) dan Mask (128) dalam bentuk IntArray
-     */
     fun encode(text: String): Pair<IntArray, IntArray> {
         val encoding = tokenizer.encode(text)
-        val rawIds = encoding.ids          // Ini bertipe LongArray
-        val rawMask = encoding.attentionMask // Ini bertipe LongArray
-
-        val targetLength = 128
-        
-        // Siapkan array dengan ukuran 128 dan isi default 0 (padding)
-        val ids = IntArray(targetLength) { 0 }
-        val mask = IntArray(targetLength) { 0 }
-
-        // Berapa banyak yang akan disalin? (Maksimal 128)
-        val copyLength = if (rawIds.size > targetLength) targetLength else rawIds.size
-
-        // Salin dan konversi dari Long ke Int
-        for (i in 0 until copyLength) {
-            ids[i] = rawIds[i].toInt()
-            mask[i] = rawMask[i].toInt()
-        }
-
+        val ids = encoding.ids.map { it.toInt() }.toIntArray()
+        val mask = encoding.attentionMask.map { it.toInt() }.toIntArray()
         return Pair(ids, mask)
     }
 }
