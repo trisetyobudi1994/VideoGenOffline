@@ -1,19 +1,13 @@
 package com.videogen.offline
 
-import android.app.ActivityManager
-import android.content.Context
 import android.os.Bundle
 import android.os.Debug
-import android.os.SystemClock
-import android.util.Log
 import android.widget.Button
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import com.videogen.offline.engine.DitRunResult
 import com.videogen.offline.engine.LiteRtLoader
 import com.videogen.offline.engine.ModelDownloader
 import com.videogen.offline.engine.TokenizerHelper
@@ -23,239 +17,223 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
-
-    private val DIT_URL = "https://huggingface.co/litert-community/Neo_Dragon/resolve/main/dit_stage0_10x16_int4.tflite"
-    private val DIT_FILE = "dit_stage0.tflite"
-    private val DL_TEXT = "5. DOWNLOAD MODEL DiT (816 MB)"
-
-    private val progressFile by lazy { File(filesDir, "progress.txt") }
-    private val crashFile by lazy { File(filesDir, "last_crash.txt") }
-
-    private fun step(msg: String) {
-        try { progressFile.appendText("${System.currentTimeMillis() % 100000} $msg\n") } catch (_: Throwable) {}
-    }
+    
+    private val DIT_STAGE0_URL = "https://huggingface.co/litert-community/Neo_Dragon/resolve/main/dit_stage0_10x16_int4.tflite"
+    private val DIT_STAGE0_FILENAME = "dit_stage0.tflite"
+    
+    private val ADAPTER_URL = "https://huggingface.co/litert-community/Neo_Dragon/resolve/main/context_adapter_dynamic_int8.tflite"
+    private val ADAPTER_FILENAME = "context_adapter.tflite"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        Thread.setDefaultUncaughtExceptionHandler { _, e ->
-            try { crashFile.writeText(Log.getStackTraceString(e)) } catch (_: Throwable) {}
-            android.os.Process.killProcess(android.os.Process.myPid())
-        }
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 96, 48, 48)
         }
+
         val title = TextView(this).apply {
-            text = "VideoGenOffline — Fase 5 (Benchmark DiT v3)"
+            text = "VideoGenOffline — Fase 5 (Benchmark DiT)"
             textSize = 18f
         }
 
         // 1. VAE
-        val btn1 = Button(this)
-        btn1.text = "1. Test Load VAE"
-        btn1.setOnClickListener {
-            runSafely(btn1, "1. Test Load VAE", "Error VAE") {
-                val l = LiteRtLoader(this@MainActivity, "models/causal_video_vae_decoder.tflite")
+        val btnTestVae = Button(this).apply {
+            text = "1. Test Load VAE"
+            setOnClickListener {
                 try {
-                    "VAE berhasil dimuat\n\nINPUT:\n${l.getInputTensorInfo()}\nOUTPUT:\n${l.getOutputTensorInfo()}"
-                } finally { l.close() }
+                    val loader = LiteRtLoader(this@MainActivity, "models/causal_video_vae_decoder.tflite")
+                    showDialog("Sukses", "VAE berhasil dimuat")
+                    loader.close()
+                } catch (e: Throwable) { showDialog("Error VAE", e.toString()) }
             }
         }
 
-        // 2. Info text encoder
-        val btn2 = Button(this)
-        btn2.text = "2. Info Text Encoder"
-        btn2.setOnClickListener {
-            runSafely(btn2, "2. Info Text Encoder", "Error Info") {
-                val l = LiteRtLoader(this@MainActivity, "models/dt5_text_encoder.tflite")
+        // 2. Info Text Encoder
+        val btnTestText = Button(this).apply {
+            text = "2. Info Text Encoder"
+            setOnClickListener {
                 try {
-                    "INPUT:\n${l.getInputTensorInfo()}\nOUTPUT:\n${l.getOutputTensorInfo()}"
-                } finally { l.close() }
+                    val loader = LiteRtLoader(this@MainActivity, "models/dt5_text_encoder.tflite")
+                    showDialog("Info Tensor", "INPUT:\n${loader.getInputTensorInfo()}\nOUTPUT:\n${loader.getOutputTensorInfo()}")
+                    loader.close()
+                } catch (e: Throwable) { showDialog("Error", e.toString()) }
             }
         }
 
         // 3. Tokenizer
-        val btn3 = Button(this)
-        btn3.text = "3. Test Tokenizer"
-        btn3.setOnClickListener {
-            runSafely(btn3, "3. Test Tokenizer", "Error Tokenizer") {
-                val (ids, mask) = TokenizerHelper(this@MainActivity).encode("a cat walking")
-                "IDs: ${ids.joinToString(", ")}\nTotal: ${ids.size} / mask ${mask.size}"
+        val btnTestToken = Button(this).apply {
+            text = "3. Test Tokenizer"
+            setOnClickListener {
+                try {
+                    val tokenizer = TokenizerHelper(this@MainActivity)
+                    val (ids, _) = tokenizer.encode("a cat walking")
+                    showDialog("Hasil Tokenizer", "IDs: ${ids.take(5).joinToString(", ")}...")
+                } catch (e: Throwable) { showDialog("Error", e.toString()) }
             }
         }
 
         // 4. Embedding
-        val btn4 = Button(this)
-        btn4.text = "4. Generate Embedding"
-        btn4.setOnClickListener {
-            runSafely(btn4, "4. Generate Embedding", "Error Encoder") {
-                val (ids, mask) = TokenizerHelper(this@MainActivity).encode("a cat walking")
-                val l = LiteRtLoader(this@MainActivity, "models/dt5_text_encoder.tflite")
-                try {
-                    val t0 = SystemClock.elapsedRealtime()
-                    val e = l.runTextEncoder(ids, mask)
-                    "Berhasil! ${e.size} angka, ${SystemClock.elapsedRealtime() - t0} ms"
-                } finally { l.close() }
-            }
-        }
-
-        // 5. Download DiT
-        val btn5 = Button(this)
-        btn5.text = DL_TEXT
-        btn5.setOnClickListener {
-            btn5.isEnabled = false
-            lifecycleScope.launch {
-                try {
-                    val f = ModelDownloader(this@MainActivity)
-                        .downloadFile(DIT_URL, DIT_FILE) { p -> btn5.text = "Mengunduh: $p%" }
-                    btn5.text = "5. Unduhan selesai (${f.length() / 1048576} MB)"
-                } catch (e: Throwable) {
-                    btn5.text = DL_TEXT
-                    btn5.isEnabled = true
-                    showDialog("Error Unduhan", e.toString())
+        val btnRunEncoder = Button(this).apply {
+            text = "4. Generate Embedding (Teks -> Makna)"
+            setOnClickListener {
+                btnRunEncoder.isEnabled = false
+                lifecycleScope.launch {
+                    try {
+                        val resultText = withContext(Dispatchers.Default) {
+                            val tokenizer = TokenizerHelper(this@MainActivity)
+                            val (ids, mask) = tokenizer.encode("a cat walking")
+                            val loader = LiteRtLoader(this@MainActivity, "models/dt5_text_encoder.tflite")
+                            val embedding = loader.runTextEncoder(ids, mask)
+                            loader.close()
+                            "Berhasil! Embedding size: ${embedding.size}"
+                        }
+                        btnRunEncoder.isEnabled = true
+                        showDialog("Sukses", resultText)
+                    } catch (e: Throwable) {
+                        btnRunEncoder.isEnabled = true
+                        showDialog("Error", e.toString())
+                    }
                 }
             }
         }
 
-        // 6. Info tensor DiT
-        val btn6 = Button(this)
-        btn6.text = "6. Info Tensor DiT"
-        btn6.setOnClickListener {
-            runSafely(btn6, "6. Info Tensor DiT", "Error DiT") {
-                val f = File(filesDir, DIT_FILE)
-                check(f.exists() && f.length() > 0) { "Unduh model dulu (tombol 5)" }
-                step("DIT-INFO: muat")
-                val l = LiteRtLoader(this@MainActivity, f.absolutePath)
-                try {
-                    step("DIT-INFO: SELESAI")
-                    "Ukuran file: ${f.length() / 1048576} MB\n\nINPUT:\n${l.getInputTensorInfo()}\nOUTPUT:\n${l.getOutputTensorInfo()}"
-                } finally { l.close() }
+        // 5. Download DiT
+        val btnDownloadDit = Button(this).apply {
+            text = "5. DOWNLOAD MODEL DiT (816 MB)"
+            setOnClickListener {
+                btnDownloadDit.isEnabled = false
+                lifecycleScope.launch {
+                    try {
+                        ModelDownloader(this@MainActivity).downloadFile(DIT_STAGE0_URL, DIT_STAGE0_FILENAME) { p ->
+                            btnDownloadDit.text = "Mengunduh DiT: $p%"
+                        }
+                        btnDownloadDit.text = "Unduhan DiT Selesai"
+                    } catch (e: Throwable) {
+                        btnDownloadDit.isEnabled = true
+                        showDialog("Error Unduhan", e.toString())
+                    }
+                }
+            }
+        }
+        
+        // 5b. Download Adapter
+        val btnDownloadAdapter = Button(this).apply {
+            text = "5b. DOWNLOAD ADAPTER (124 MB)"
+            setOnClickListener {
+                btnDownloadAdapter.isEnabled = false
+                lifecycleScope.launch {
+                    try {
+                        ModelDownloader(this@MainActivity).downloadFile(ADAPTER_URL, ADAPTER_FILENAME) { p ->
+                            btnDownloadAdapter.text = "Mengunduh Adapter: $p%"
+                        }
+                        btnDownloadAdapter.text = "Unduhan Adapter Selesai"
+                    } catch (e: Throwable) {
+                        btnDownloadAdapter.isEnabled = true
+                        showDialog("Error Unduhan", e.toString())
+                    }
+                }
             }
         }
 
-        // 7. Benchmark
-        val btn7 = Button(this)
-        btn7.text = "7. UJI DIT (3x langkah)"
-        btn7.setOnClickListener {
-            runSafely(btn7, "7. UJI DIT (3x langkah)", "GAGAL", "MENGUJI DIT... (bisa beberapa menit)") {
-                val f = File(filesDir, DIT_FILE)
-                check(f.exists() && f.length() > 0) { "Unduh model dulu (tombol 5)" }
-
-                step("BENCH: embedding")
-                val (ids, mask) = TokenizerHelper(this@MainActivity).encode("a cat walking")
-                val enc = LiteRtLoader(this@MainActivity, "models/dt5_text_encoder.tflite")
-                val embedding = try { enc.runTextEncoder(ids, mask) } finally { enc.close() }
-
-                val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-                val mi = ActivityManager.MemoryInfo()
-                am.getMemoryInfo(mi)
-                val totalMb = mi.totalMem / 1048576
-                val availMb = mi.availMem / 1048576
-
-                val pssBefore = Debug.getPss() / 1024
-                step("BENCH: muat DiT")
-                val t0 = SystemClock.elapsedRealtime()
-                val dit = LiteRtLoader(this@MainActivity, f.absolutePath)
-                val loadMs = SystemClock.elapsedRealtime() - t0
-                step("BENCH: DiT dimuat ${loadMs}ms")
-
-                try {
-                    val times = ArrayList<Long>()
-                    var last: DitRunResult? = null
-                    for (r in 1..3) {
-                        step("BENCH: langkah $r mulai")
-                        val a = SystemClock.elapsedRealtime()
-                        last = dit.runOneDitStep(embedding)
-                        times.add(SystemClock.elapsedRealtime() - a)
-                        step("BENCH: langkah $r selesai ${times.last()}ms")
-                    }
-                    val pssAfter = Debug.getPss() / 1024
-                    val res = last!!
-
-                    var mn = Float.MAX_VALUE
-                    var mx = -Float.MAX_VALUE
-                    var sum = 0.0
-                    var bad = 0
-                    for (v in res.output) {
-                        if (v.isNaN() || v.isInfinite()) bad++ else {
-                            if (v < mn) mn = v
-                            if (v > mx) mx = v
-                            sum += v
+        // 6. Test Load DiT
+        val btnTestDit = Button(this).apply {
+            text = "6. Info Tensor DiT"
+            setOnClickListener {
+                val fileDit = File(filesDir, DIT_STAGE0_FILENAME)
+                if (!fileDit.exists()) return@setOnClickListener showDialog("Error", "Unduh model dulu!")
+                
+                btnTestDit.isEnabled = false
+                lifecycleScope.launch {
+                    try {
+                        val info = withContext(Dispatchers.Default) {
+                            val loader = LiteRtLoader(this@MainActivity, fileDit.absolutePath)
+                            val res = "INPUT:\n${loader.getInputTensorInfo()}\nOUTPUT:\n${loader.getOutputTensorInfo()}"
+                            loader.close()
+                            res
                         }
+                        btnTestDit.isEnabled = true
+                        showDialog("Info Tensor DiT", info)
+                    } catch (e: Throwable) {
+                        btnTestDit.isEnabled = true
+                        showDialog("Error", e.toString())
                     }
-                    val perStep = times.last()
-                    step("BENCH: SELESAI")
+                }
+            }
+        }
 
-                    "BENCHMARK DIT (stage 0)\n\n" +
-                        "RAM HP: total $totalMb MB, bebas $availMb MB\n" +
-                        "Waktu muat model: ${loadMs / 1000.0} dtk\n" +
-                        "Waktu per langkah: ${times.joinToString(" / ") { "${it / 1000.0} dtk" }}\n" +
-                        "(langkah 1 biasanya paling lambat)\n" +
-                        "PSS proses: $pssBefore -> $pssAfter MB (saat model aktif)\n\n" +
-                        "Proyeksi 20 langkah: ${perStep * 20 / 1000} dtk per stage\n" +
-                        "(jika pakai guidance, kira-kira 2x lipat)\n\n" +
-                        "Output: min $mn, maks $mx, rata-rata ${sum / res.output.size}, NaN/Inf: $bad\n\n" +
-                        "PERAN INPUT:\n${res.report}"
-                } finally {
-                    dit.close()
+        // 7. BENCHMARK LENGKAP
+        val btnBenchmarkDit = Button(this).apply {
+            text = "7. UJI DIT (BENCHMARK)"
+            setOnClickListener {
+                val fileDit = File(filesDir, DIT_STAGE0_FILENAME)
+                val fileAdapter = File(filesDir, ADAPTER_FILENAME)
+                if (!fileDit.exists() || !fileAdapter.exists()) {
+                    return@setOnClickListener showDialog("Error", "Unduh Model DiT dan Adapter (Tombol 5 & 5b) dulu!")
+                }
+
+                btnBenchmarkDit.isEnabled = false
+                btnBenchmarkDit.text = "MENGUJI DIT... (Bisa makan waktu)"
+
+                lifecycleScope.launch {
+                    try {
+                        val resultText = withContext(Dispatchers.Default) {
+                            // 1. Ambil Embedding (Fase 4)
+                            val tokenizer = TokenizerHelper(this@MainActivity)
+                            val (ids, mask) = tokenizer.encode("a cat walking")
+                            val textLoader = LiteRtLoader(this@MainActivity, "models/dt5_text_encoder.tflite")
+                            val rawEmbedding = textLoader.runTextEncoder(ids, mask)
+                            textLoader.close()
+
+                            // 2. Context Adapter (Mengubah 4096 -> 1536)
+                            val adapterLoader = LiteRtLoader(this@MainActivity, fileAdapter.absolutePath)
+                            val context = adapterLoader.runContextAdapter(rawEmbedding)
+                            adapterLoader.close()
+
+                            // 3. Uji DiT (Waktu & Memori)
+                            val startTime = System.currentTimeMillis()
+                            val startRam = Debug.getPss() / 1024 
+
+                            val ditLoader = LiteRtLoader(this@MainActivity, fileDit.absolutePath)
+                            val outputLatent = ditLoader.runDitStep(context)
+                            ditLoader.close()
+
+                            val endTime = System.currentTimeMillis()
+                            val endRam = Debug.getPss() / 1024 
+
+                            "BENCHMARK SELESAI\n\n" +
+                            "Waktu 1 langkah DiT: ${(endTime - startTime) / 1000.0} detik\n" +
+                            "RAM terpakai: ${endRam - startRam} MB\n" +
+                            "Output Latent size: ${outputLatent.size}\n\n" +
+                            "Total langkah (misal 20x): ${((endTime - startTime) * 20 / 1000)} detik"
+                        }
+
+                        btnBenchmarkDit.text = "7. UJI DIT (BENCHMARK)"
+                        btnBenchmarkDit.isEnabled = true
+                        showDialog("Hasil Benchmark", resultText)
+
+                    } catch (e: Throwable) {
+                        btnBenchmarkDit.text = "7. UJI DIT (BENCHMARK)"
+                        btnBenchmarkDit.isEnabled = true
+                        showDialog("GAGAL / OOM", "HP tidak kuat: ${e.toString()}")
+                    }
                 }
             }
         }
 
         layout.addView(title)
-        listOf(btn1, btn2, btn3, btn4, btn5, btn6, btn7).forEach { layout.addView(it) }
-        setContentView(ScrollView(this).apply { addView(layout) })
-
-        showPreviousRunInfo()
-    }
-
-    private fun runSafely(
-        button: Button,
-        normalText: String,
-        errorTitle: String,
-        busyText: String = "Memproses...",
-        work: () -> String
-    ) {
-        button.text = busyText
-        button.isEnabled = false
-        lifecycleScope.launch {
-            try {
-                val result = withContext(Dispatchers.Default) { work() }
-                showDialog("Hasil", result)
-            } catch (e: Throwable) {
-                step("ERROR: $e")
-                showDialog(errorTitle, e.toString())
-            } finally {
-                button.text = normalText
-                button.isEnabled = true
-            }
-        }
-    }
-
-    private fun showPreviousRunInfo() {
-        val sb = StringBuilder()
-        if (crashFile.exists()) {
-            sb.append("CRASH SEBELUMNYA:\n").append(crashFile.readText().take(2500)).append("\n\n")
-            crashFile.delete()
-        }
-        if (progressFile.exists()) {
-            val log = progressFile.readText()
-            val lastLine = log.trim().lines().lastOrNull() ?: ""
-            if (!lastLine.contains("SELESAI") || sb.isNotEmpty()) {
-                sb.append("LANGKAH TERAKHIR SESI LALU:\n").append(log.takeLast(1200))
-            }
-            progressFile.delete()
-        }
-        if (sb.isNotEmpty()) showDialog("Info sesi sebelumnya", sb.toString())
+        layout.addView(btnTestVae)
+        layout.addView(btnTestText)
+        layout.addView(btnTestToken)
+        layout.addView(btnRunEncoder)
+        layout.addView(btnDownloadDit)
+        layout.addView(btnDownloadAdapter)
+        layout.addView(btnTestDit)
+        layout.addView(btnBenchmarkDit)
+        setContentView(layout)
     }
 
     private fun showDialog(title: String, message: String) {
-        AlertDialog.Builder(this)
-            .setTitle(title)
-            .setMessage(message)
-            .setPositiveButton("OK", null)
-            .show()
+        AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("OK", null).show()
     }
 }
