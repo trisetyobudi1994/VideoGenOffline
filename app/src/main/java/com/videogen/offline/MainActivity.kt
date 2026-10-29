@@ -1,7 +1,9 @@
 package com.videogen.offline
 
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Debug
+import android.os.Environment
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -15,76 +17,68 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
+import java.util.Random
 
 class MainActivity : AppCompatActivity() {
     
     private val DIT_STAGE0_URL = "https://huggingface.co/litert-community/Neo_Dragon/resolve/main/dit_stage0_10x16_int4.tflite"
     private val DIT_STAGE0_FILENAME = "dit_stage0.tflite"
-    
     private val ADAPTER_URL = "https://huggingface.co/litert-community/Neo_Dragon/resolve/main/context_adapter_dynamic_int8.tflite"
     private val ADAPTER_FILENAME = "context_adapter.tflite"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 96, 48, 48)
+        }
+        val title = TextView(this).apply { text = "VideoGenOffline — The Final Pipeline"; textSize = 18f }
 
-        val layout = LinearLayout(this)
-        layout.orientation = LinearLayout.VERTICAL
-        layout.setPadding(48, 96, 48, 48)
-
-        val title = TextView(this)
-        title.text = "VideoGenOffline — Fase 5 (Benchmark DiT)"
-        title.textSize = 18f
-
-        // 1. VAE
         val btnTestVae = Button(this)
         btnTestVae.text = "1. Test Load VAE"
         btnTestVae.setOnClickListener {
             try {
                 val loader = LiteRtLoader(this, "models/causal_video_vae_decoder.tflite")
-                showDialog("Sukses", "VAE berhasil dimuat")
+                showDialog("Sukses", "VAE dimuat")
                 loader.close()
-            } catch (e: Throwable) { showDialog("Error VAE", e.toString()) }
+            } catch (e: Throwable) { showDialog("Error", e.toString()) }
         }
 
-        // 2. Info Text Encoder
         val btnTestText = Button(this)
         btnTestText.text = "2. Info Text Encoder"
         btnTestText.setOnClickListener {
             try {
                 val loader = LiteRtLoader(this, "models/dt5_text_encoder.tflite")
-                showDialog("Info Tensor", "INPUT:\n${loader.getInputTensorInfo()}\nOUTPUT:\n${loader.getOutputTensorInfo()}")
+                showDialog("Info", loader.getInputTensorInfo())
                 loader.close()
             } catch (e: Throwable) { showDialog("Error", e.toString()) }
         }
 
-        // 3. Tokenizer
         val btnTestToken = Button(this)
         btnTestToken.text = "3. Test Tokenizer"
         btnTestToken.setOnClickListener {
             try {
-                val tokenizer = TokenizerHelper(this)
-                val (ids, _) = tokenizer.encode("a cat walking")
-                showDialog("Hasil Tokenizer", "IDs: ${ids.take(5).joinToString(", ")}...")
+                val (ids, _) = TokenizerHelper(this).encode("a cat walking")
+                showDialog("Sukses", "IDs: ${ids.take(5).joinToString(", ")}...")
             } catch (e: Throwable) { showDialog("Error", e.toString()) }
         }
 
-        // 4. Embedding
         val btnRunEncoder = Button(this)
-        btnRunEncoder.text = "4. Generate Embedding (Teks -> Makna)"
+        btnRunEncoder.text = "4. Generate Embedding"
         btnRunEncoder.setOnClickListener {
             btnRunEncoder.isEnabled = false
             lifecycleScope.launch {
                 try {
-                    val resultText = withContext(Dispatchers.Default) {
-                        val tokenizer = TokenizerHelper(this@MainActivity)
-                        val (ids, mask) = tokenizer.encode("a cat walking")
+                    val res = withContext(Dispatchers.Default) {
+                        val (ids, mask) = TokenizerHelper(this@MainActivity).encode("a cat walking")
                         val loader = LiteRtLoader(this@MainActivity, "models/dt5_text_encoder.tflite")
-                        val embedding = loader.runTextEncoder(ids, mask)
+                        val emb = loader.runTextEncoder(ids, mask)
                         loader.close()
-                        "Berhasil! Embedding size: ${embedding.size}"
+                        "Berhasil! Size: ${emb.size}"
                     }
                     btnRunEncoder.isEnabled = true
-                    showDialog("Sukses", resultText)
+                    showDialog("Sukses", res)
                 } catch (e: Throwable) {
                     btnRunEncoder.isEnabled = true
                     showDialog("Error", e.toString())
@@ -92,7 +86,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 5. Download DiT
         val btnDownloadDit = Button(this)
         btnDownloadDit.text = "5. DOWNLOAD MODEL DiT (816 MB)"
         btnDownloadDit.setOnClickListener {
@@ -105,12 +98,11 @@ class MainActivity : AppCompatActivity() {
                     btnDownloadDit.text = "Unduhan DiT Selesai"
                 } catch (e: Throwable) {
                     btnDownloadDit.isEnabled = true
-                    showDialog("Error Unduhan", e.toString())
+                    showDialog("Error", e.toString())
                 }
             }
         }
-        
-        // 5b. Download Adapter
+
         val btnDownloadAdapter = Button(this)
         btnDownloadAdapter.text = "5b. DOWNLOAD ADAPTER (124 MB)"
         btnDownloadAdapter.setOnClickListener {
@@ -123,21 +115,16 @@ class MainActivity : AppCompatActivity() {
                     btnDownloadAdapter.text = "Unduhan Adapter Selesai"
                 } catch (e: Throwable) {
                     btnDownloadAdapter.isEnabled = true
-                    showDialog("Error Unduhan", e.toString())
+                    showDialog("Error", e.toString())
                 }
             }
         }
 
-        // 6. Test Load DiT
         val btnTestDit = Button(this)
         btnTestDit.text = "6. Info Tensor DiT"
         btnTestDit.setOnClickListener {
             val fileDit = File(filesDir, DIT_STAGE0_FILENAME)
-            if (!fileDit.exists()) {
-                showDialog("Error", "Unduh model dulu!")
-                return@setOnClickListener
-            }
-            
+            if (!fileDit.exists()) return@setOnClickListener showDialog("Error", "Unduh model dulu!")
             btnTestDit.isEnabled = false
             lifecycleScope.launch {
                 try {
@@ -156,60 +143,86 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 7. BENCHMARK LENGKAP
-        val btnBenchmarkDit = Button(this)
-        btnBenchmarkDit.text = "7. UJI DIT (BENCHMARK)"
-        btnBenchmarkDit.setOnClickListener {
+        // TOMBOL 8: THE ULTIMATE PIPELINE
+        val btnGenerate = Button(this)
+        btnGenerate.text = "8. PROSES AI VIDEO (UJI COBA)"
+        btnGenerate.setOnClickListener {
             val fileDit = File(filesDir, DIT_STAGE0_FILENAME)
             val fileAdapter = File(filesDir, ADAPTER_FILENAME)
             if (!fileDit.exists() || !fileAdapter.exists()) {
-                showDialog("Error", "Unduh Model DiT dan Adapter (Tombol 5 & 5b) dulu!")
-                return@setOnClickListener
+                return@setOnClickListener showDialog("Error", "Unduh Model DiT & Adapter dulu!")
             }
 
-            btnBenchmarkDit.isEnabled = false
-            btnBenchmarkDit.text = "MENGUJI DIT... (Bisa makan waktu)"
+            btnGenerate.isEnabled = false
+            btnGenerate.text = "AI BEKERJA... (Jangan tutup)"
 
             lifecycleScope.launch {
                 try {
                     val resultText = withContext(Dispatchers.Default) {
-                        // 1. Embedding
-                        val tokenizer = TokenizerHelper(this@MainActivity)
-                        val (ids, mask) = tokenizer.encode("a cat walking")
+                        val log = StringBuilder()
+                        val startTime = System.currentTimeMillis()
+                        val startRam = Debug.getPss() / 1024
+
+                        // 1. Teks -> Embedding
+                        log.append("1. Tokenisasi...\n")
+                        val (ids, mask) = TokenizerHelper(this@MainActivity).encode("a beautiful mountain landscape, 4k")
                         val textLoader = LiteRtLoader(this@MainActivity, "models/dt5_text_encoder.tflite")
                         val rawEmbedding = textLoader.runTextEncoder(ids, mask)
                         textLoader.close()
 
                         // 2. Context Adapter
+                        log.append("2. Adapter...\n")
                         val adapterLoader = LiteRtLoader(this@MainActivity, fileAdapter.absolutePath)
                         val context = adapterLoader.runContextAdapter(rawEmbedding)
                         adapterLoader.close()
 
-                        // 3. Uji DiT
-                        val startTime = System.currentTimeMillis()
-                        val startRam = Debug.getPss() / 1024 
-
+                        // 3. Latent Awal (2560 floats)
+                        var latent = FloatArray(2560) { Random().nextFloat() * 2f - 1f }
+                        
+                        // 4. Denoising
+                        log.append("3. Memuat DiT...\n")
                         val ditLoader = LiteRtLoader(this@MainActivity, fileDit.absolutePath)
-                        val outputLatent = ditLoader.runDitStep(context)
+                        val totalSteps = 10
+                        
+                        for (step in 1..totalSteps) {
+                            val timestep = (1000 - (step * (1000 / totalSteps))).toFloat()
+                            log.append("   Step $step/$totalSteps...\n")
+                            latent = ditLoader.runDitStep(latent, timestep, context)
+                        }
+                        
+                        log.append("4. Tutup DiT & Muat VAE...\n")
                         ditLoader.close()
+                        System.gc()
+
+                        // 5. VAE Decode
+                        val vaeLoader = LiteRtLoader(this@MainActivity, "models/causal_video_vae_decoder.tflite")
+                        val bitmap = vaeLoader.decodeLatentToImage(latent)
+                        vaeLoader.close()
+
+                        // 6. Simpan
+                        log.append("5. Simpan Gambar...\n")
+                        val filePath = File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "VideoGen_${System.currentTimeMillis()}.jpg")
+                        FileOutputStream(filePath).use { out ->
+                            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+                        }
 
                         val endTime = System.currentTimeMillis()
-                        val endRam = Debug.getPss() / 1024 
+                        val endRam = Debug.getPss() / 1024
 
-                        "BENCHMARK SELESAI\n\n" +
-                        "Waktu 1 langkah DiT: ${(endTime - startTime) / 1000.0} detik\n" +
-                        "RAM terpakai: ${endRam - startRam} MB\n" +
-                        "Output Latent size: ${outputLatent.size}\n\n" +
-                        "Total langkah (misal 20x): ${((endTime - startTime) * 20 / 1000)} detik"
+                        log.append("\nSELESAI!\n")
+                        log.append("Waktu: ${(endTime - startTime) / 1000.0} detik\n")
+                        log.append("RAM: ${endRam - startRam} MB\n")
+                        log.append("Gambar: ${filePath.absolutePath}")
+                        log.toString()
                     }
 
-                    btnBenchmarkDit.text = "7. UJI DIT (BENCHMARK)"
-                    btnBenchmarkDit.isEnabled = true
-                    showDialog("Hasil Benchmark", resultText)
+                    btnGenerate.text = "8. PROSES AI VIDEO"
+                    btnGenerate.isEnabled = true
+                    showDialog("Hasil Pipeline", resultText)
 
                 } catch (e: Throwable) {
-                    btnBenchmarkDit.text = "7. UJI DIT (BENCHMARK)"
-                    btnBenchmarkDit.isEnabled = true
+                    btnGenerate.text = "8. PROSES AI VIDEO"
+                    btnGenerate.isEnabled = true
                     showDialog("GAGAL / OOM", "HP tidak kuat: ${e.toString()}")
                 }
             }
@@ -223,7 +236,7 @@ class MainActivity : AppCompatActivity() {
         layout.addView(btnDownloadDit)
         layout.addView(btnDownloadAdapter)
         layout.addView(btnTestDit)
-        layout.addView(btnBenchmarkDit)
+        layout.addView(btnGenerate)
         setContentView(layout)
     }
 
