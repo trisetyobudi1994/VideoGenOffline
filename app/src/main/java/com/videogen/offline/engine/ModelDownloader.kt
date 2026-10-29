@@ -20,7 +20,6 @@ class ModelDownloader(private val context: Context) {
         val file = File(context.filesDir, fileName)
         if (file.exists() && file.length() > 0) return@withContext file
 
-        // Unduh ke file sementara dulu, ganti nama hanya jika lengkap
         val part = File(context.filesDir, "$fileName.part")
         if (part.exists()) part.delete()
 
@@ -48,7 +47,7 @@ class ModelDownloader(private val context: Context) {
                     while (true) {
                         val n = input.read(buf)
                         if (n == -1) break
-                        ensureActive() // berhenti jika coroutine dibatalkan
+                        ensureActive()
                         output.write(buf, 0, n)
                         done += n
                         if (total > 0) {
