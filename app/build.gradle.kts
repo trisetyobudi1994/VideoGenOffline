@@ -14,6 +14,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         ndk {
+            // Fokus ke HP modern (64-bit) agar ukuran APK lebih kecil dan performa maksimal
             abiFilters.addAll(listOf("arm64-v8a"))
         }
     }
@@ -50,7 +51,16 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
+    
+    // --- TENSORFLOW LITE CORE ---
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
-    implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+    
+    // --- GOD MODE: GPU & NPU DELEGATES ---
+    // 1. Library utama untuk GPU
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
+    // 2. API untuk mengecek kompatibilitas GPU HP
+    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.16.1")
+    // 3. Mendukung operasi khusus (mencegah crash saat model dimuat)
+    implementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1")
 }
