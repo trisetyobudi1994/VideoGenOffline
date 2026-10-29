@@ -49,3 +49,9 @@ class TokenizerHelper(context: Context) {
         var pos = n
         while (pos > 0) { out.add(tok[pos]); pos = prev[pos] }
         out.reverse()
+        out.add(eosId)
+
+        val ids = out.toIntArray()
+        return Pair(ids, IntArray(ids.size) { 1 })
+    }
+}
