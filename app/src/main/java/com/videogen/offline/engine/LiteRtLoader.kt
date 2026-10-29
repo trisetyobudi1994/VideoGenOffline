@@ -3,29 +3,46 @@ package com.videogen.offline.engine
 import android.content.Context
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.Tensor
+import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 
-class LiteRtLoader(context: Context, assetPath: String) {
+class LiteRtLoader(context: Context, pathOrAsset: String) {
 
     private val interpreter: Interpreter
 
     init {
-        val model = loadModelFile(context, assetPath)
+        val model = when {
+            pathOrAsset.startsWith("http") ->
+                throw IllegalArgumentException("Gunakan ModelDownloader untuk URL")
+            pathOrAsset.startsWith("/") -> {
+                val f = File(pathOrAsset)
+                if (!f.exists()) throw IllegalArgumentException("File tidak ditemukan: $pathOrAsset")
+                loadModelFileFromStorage(f)
+            }
+            else -> loadModelFileFromAssets(context, pathOrAsset)
+        }
+
         val options = Interpreter.Options()
         options.setNumThreads(4)
         interpreter = Interpreter(model, options)
     }
 
-    private fun loadModelFile(context: Context, path: String): MappedByteBuffer {
-        val fd = context.assets.openFd(path)
-        val input = FileInputStream(fd.fileDescriptor)
-        val channel = input.channel
-        return channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
+    private fun loadModelFileFromAssets(context: Context, path: String): MappedByteBuffer {
+        context.assets.openFd(path).use { fd ->
+            FileInputStream(fd.fileDescriptor).use { input ->
+                return input.channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
+            }
+        }
+    }
+
+    private fun loadModelFileFromStorage(file: File): MappedByteBuffer {
+        FileInputStream(file).use { input ->
+            return input.channel.map(FileChannel.MapMode.READ_ONLY, 0, file.length())
+        }
     }
 
     fun getInputTensorInfo(): String {
@@ -46,46 +63,45 @@ class LiteRtLoader(context: Context, assetPath: String) {
         return sb.toString()
     }
 
-    private fun fill(tensor: Tensor, data: IntArray): ByteBuffer {
-        val buf = ByteBuffer.allocateDirect(tensor.numBytes()).order(ByteOrder.nativeOrder())
-        val n = tensor.numElements()
-        when (tensor.dataType()) {
-            DataType.INT32 -> { val b = buf.asIntBuffer(); for (i in 0 until n) b.put(if (i < data.size) data[i] else 0) }
-            DataType.INT64 -> { val b = buf.asLongBuffer(); for (i in 0 until n) b.put(if (i < data.size) data[i].toLong() else 0L) }
-            DataType.FLOAT32 -> { val b = buf.asFloatBuffer(); for (i in 0 until n) b.put(if (i < data.size) data[i].toFloat() else 0f) }
-            else -> throw IllegalStateException("Tipe input tidak didukung: ${tensor.dataType()}")
-        }
-        buf.rewind()
-        return buf
-    }
-
+    // Fungsi Fase 4 (logika yang sudah terbukti jalan)
     fun runTextEncoder(ids: IntArray, mask: IntArray): FloatArray {
-        check(interpreter.inputTensorCount == 2) {
-            "Model punya ${interpreter.inputTensorCount} input, diharapkan 2"
+        val inputTensor0 = interpreter.getInputTensor(0)
+        val inputTensor1 = interpreter.getInputTensor(1)
+
+        val idBuffer = ByteBuffer.allocateDirect(inputTensor0.numBytes()).order(ByteOrder.nativeOrder())
+        val maskBuffer = ByteBuffer.allocateDirect(inputTensor1.numBytes()).order(ByteOrder.nativeOrder())
+
+        val requiredLen0 = inputTensor0.numBytes() / 4
+        val requiredLen1 = inputTensor1.numBytes() / 4
+
+        if (inputTensor0.dataType() == DataType.INT32) {
+            val ib = idBuffer.asIntBuffer()
+            for (i in 0 until requiredLen0) ib.put(if (i < ids.size) ids[i] else 0)
+        } else {
+            val fb = idBuffer.asFloatBuffer()
+            for (i in 0 until requiredLen0) fb.put(if (i < ids.size) ids[i].toFloat() else 0f)
         }
 
-        var idIdx = 0
-        var maskIdx = 1
-        for (i in 0 until 2) {
-            if (interpreter.getInputTensor(i).name().lowercase().contains("mask")) {
-                maskIdx = i
-                idIdx = 1 - i
-            }
+        if (inputTensor1.dataType() == DataType.INT32) {
+            val ib = maskBuffer.asIntBuffer()
+            for (i in 0 until requiredLen1) ib.put(if (i < mask.size) mask[i] else 0)
+        } else {
+            val fb = maskBuffer.asFloatBuffer()
+            for (i in 0 until requiredLen1) fb.put(if (i < mask.size) mask[i].toFloat() else 0f)
         }
 
-        val inputs = arrayOfNulls<Any>(2)
-        inputs[idIdx] = fill(interpreter.getInputTensor(idIdx), ids)
-        inputs[maskIdx] = fill(interpreter.getInputTensor(maskIdx), mask)
+        val outputTensor = interpreter.getOutputTensor(0)
+        val outSize = outputTensor.shape().fold(1) { acc, i -> acc * i }
+        val outputBuffer = ByteBuffer.allocateDirect(outSize * 4).order(ByteOrder.nativeOrder())
 
-        val out = interpreter.getOutputTensor(0)
-        check(out.dataType() == DataType.FLOAT32) { "Output bukan FLOAT32: ${out.dataType()}" }
-        val outBuf = ByteBuffer.allocateDirect(out.numBytes()).order(ByteOrder.nativeOrder())
+        val inputs = arrayOf<Any>(idBuffer, maskBuffer)
+        val outputs = mapOf(0 to outputBuffer)
+        interpreter.runForMultipleInputsOutputs(inputs, outputs)
 
-        interpreter.runForMultipleInputsOutputs(inputs, mapOf(0 to outBuf))
+        outputBuffer.rewind()
+        val result = FloatArray(outSize)
+        outputBuffer.asFloatBuffer().get(result)
 
-        outBuf.rewind()
-        val result = FloatArray(out.numElements())
-        outBuf.asFloatBuffer().get(result)
         return result
     }
 
