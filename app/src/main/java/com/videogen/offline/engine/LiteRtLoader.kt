@@ -1,8 +1,12 @@
 package com.videogen.offline.engine
 
 import android.content.Context
+import android.util.Log
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
+import org.tensorflow.lite.gpu.CompatibilityList
+import org.tensorflow.lite.gpu.GpuDelegate
+import org.tensorflow.lite.nnapi.NnApiDelegate
 import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
@@ -13,6 +17,8 @@ import java.nio.channels.FileChannel
 class LiteRtLoader(context: Context, pathOrAsset: String) {
 
     private val interpreter: Interpreter
+    private val gpuDelegate: GpuDelegate?
+    private val nnApiDelegate: NnApiDelegate?
 
     init {
         val model = when {
@@ -21,13 +27,44 @@ class LiteRtLoader(context: Context, pathOrAsset: String) {
             pathOrAsset.startsWith("/") -> {
                 val f = File(pathOrAsset)
                 if (!f.exists()) throw IllegalArgumentException("File tidak ditemukan: $pathOrAsset")
+                // TRIK 1: ZERO-COPY MMAP (Baca langsung dari disk, hemat RAM)
                 loadModelFileFromStorage(f)
             }
             else -> loadModelFileFromAssets(context, pathOrAsset)
         }
 
         val options = Interpreter.Options()
-        options.setNumThreads(4)
+        
+        // TRIK 2: AKTIFKAN GPU DELEGATE (Lempar beban ke GPU)
+        val compatList = CompatibilityList()
+        var gpu: GpuDelegate? = null
+        var nnapi: NnApiDelegate? = null
+
+        if (compatList.isDelegateSupportedOnThisDevice) {
+            val delegateOptions = compatList.bestOptionsForThisDevice
+            delegateOptions.setPrecisionLossAllowed(true) // TRIK 3: IZINKAN FP16 (Hemat RAM 50%)
+            gpu = GpuDelegate(delegateOptions)
+            options.addDelegate(gpu)
+            Log.d("LiteRtLoader", "Menggunakan GPU Delegate (FP16 Mode)")
+        } else {
+            // Fallback ke NNAPI (NPU) jika GPU tidak mendukung
+            try {
+                nnapi = NnApiDelegate(NnApiDelegate.Options().apply {
+                    setAllowFp16(true)
+                })
+                options.addDelegate(nnapi)
+                Log.d("LiteRtLoader", "Menggunakan NNAPI Delegate (NPU Mode)")
+            } catch (e: Exception) {
+                // Fallback ke CPU (XNNPACK - Optimasi CPU)
+                options.setUseXNNPACK(true)
+                options.setNumThreads(4)
+                Log.d("LiteRtLoader", "Menggunakan CPU XNNPACK (4 Threads)")
+            }
+        }
+
+        gpuDelegate = gpu
+        nnApiDelegate = nnapi
+
         interpreter = Interpreter(model, options)
     }
 
@@ -41,6 +78,7 @@ class LiteRtLoader(context: Context, pathOrAsset: String) {
 
     private fun loadModelFileFromStorage(file: File): MappedByteBuffer {
         FileInputStream(file).use { input ->
+            // Mmap: Memetakan file langsung ke memori virtual tanpa memuat semuanya ke RAM fisik
             return input.channel.map(FileChannel.MapMode.READ_ONLY, 0, file.length())
         }
     }
@@ -63,7 +101,6 @@ class LiteRtLoader(context: Context, pathOrAsset: String) {
         return sb.toString()
     }
 
-    // FUNGSI 1: Text Encoder (Output 524.288 angka)
     fun runTextEncoder(ids: IntArray, mask: IntArray): FloatArray {
         val inputTensor0 = interpreter.getInputTensor(0)
         val inputTensor1 = interpreter.getInputTensor(1)
@@ -74,7 +111,6 @@ class LiteRtLoader(context: Context, pathOrAsset: String) {
         val requiredLen0 = inputTensor0.numBytes() / 4
         val requiredLen1 = inputTensor1.numBytes() / 4
 
-        // PAKSA INTEGER UNTUK MENGHINDARI ERROR EMBEDDING_LOOKUP
         val ib0 = idBuffer.asIntBuffer()
         for (i in 0 until requiredLen0) ib0.put(if (i < ids.size) ids[i] else 0)
 
@@ -95,7 +131,6 @@ class LiteRtLoader(context: Context, pathOrAsset: String) {
         return result
     }
 
-    // FUNGSI 2: Context Adapter (Mengubah 4096 -> 1536)
     fun runContextAdapter(embedding: FloatArray): FloatArray {
         val inputBuffer = ByteBuffer.allocateDirect(embedding.size * 4).order(ByteOrder.nativeOrder())
         inputBuffer.asFloatBuffer().put(embedding)
@@ -112,7 +147,6 @@ class LiteRtLoader(context: Context, pathOrAsset: String) {
         return result
     }
 
-    // FUNGSI 3: Uji 1 Langkah DiT (BENCHMARK)
     fun runDitStep(context: FloatArray): FloatArray {
         val inputBuffers = mutableListOf<ByteBuffer>()
         val inputCount = interpreter.inputTensorCount
@@ -123,15 +157,11 @@ class LiteRtLoader(context: Context, pathOrAsset: String) {
             val requiredLen = tensor.numBytes() / 4
             val fb = buffer.asFloatBuffer()
 
-            // Isi data berdasarkan urutan Input dari Screenshot Info Tensor:
             if (i == 0 || i == 1) {
-                // Input 0 & 1: Latent (Noise). Shape [1, 16, 1, 10, 16] = 2560 floats
-                for (j in 0 until requiredLen) fb.put((Math.random().toFloat() * 2f) - 1f) // Isi noise acak
+                for (j in 0 until requiredLen) fb.put((Math.random().toFloat() * 2f) - 1f)
             } else if (i == 2) {
-                // Input 2: Context (dari Adapter). Shape [1, 128, 1536] = 196.608 floats
                 for (j in 0 until requiredLen) fb.put(if (j < context.size) context[j] else 0f)
             } else {
-                // Input 3, 4, 5: Mask, dll. Isi dengan 1.0f atau 0.0f
                 for (j in 0 until requiredLen) fb.put(1.0f)
             }
             inputBuffers.add(buffer)
@@ -149,5 +179,9 @@ class LiteRtLoader(context: Context, pathOrAsset: String) {
         return result
     }
 
-    fun close() = interpreter.close()
+    fun close() {
+        interpreter.close()
+        gpuDelegate?.close()
+        nnApiDelegate?.close()
+    }
 }
