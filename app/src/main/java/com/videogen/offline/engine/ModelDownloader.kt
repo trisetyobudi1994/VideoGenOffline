@@ -1,6 +1,7 @@
 package com.videogen.offline.engine
 
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -12,18 +13,36 @@ import java.net.URL
 
 class ModelDownloader(private val context: Context) {
 
+    // Menerima List<String> untuk fallback URL
     suspend fun downloadFile(
-        url: String,
+        urls: List<String>,
         fileName: String,
         onProgress: (Int) -> Unit
     ): File = withContext(Dispatchers.IO) {
         val file = File(context.filesDir, fileName)
         if (file.exists() && file.length() > 0) return@withContext file
 
-        val part = File(context.filesDir, "$fileName.part")
+        var lastException: Throwable? = null
+
+        for ((index, url) in urls.withIndex()) {
+            try {
+                return@withContext downloadSingleUrl(url, file, onProgress)
+            } catch (e: Throwable) {
+                lastException = e
+            }
+        }
+        throw IOException("Semua server gagal. Error: ${lastException?.message}")
+    }
+
+    private suspend fun downloadSingleUrl(
+        urlStr: String,
+        file: File,
+        onProgress: (Int) -> Unit
+    ): File = withContext(Dispatchers.IO) {
+        val part = File(context.filesDir, "${file.name}.part")
         if (part.exists()) part.delete()
 
-        val conn = URL(url).openConnection() as HttpURLConnection
+        val conn = URL(urlStr).openConnection() as HttpURLConnection
         try {
             conn.connectTimeout = 15_000
             conn.readTimeout = 30_000
@@ -63,7 +82,7 @@ class ModelDownloader(private val context: Context) {
 
             if (total > 0 && done != total) throw IOException("Unduhan tidak lengkap")
             if (!part.renameTo(file)) throw IOException("Gagal menyimpan file")
-            file
+            return@withContext file
         } catch (e: Throwable) {
             part.delete()
             throw e
