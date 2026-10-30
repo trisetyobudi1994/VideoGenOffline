@@ -92,7 +92,6 @@ class MainActivity : AppCompatActivity() {
                         val depth = try { estimator.estimateDepth(base) } finally { estimator.close() }
                         val depthMs = SystemClock.elapsedRealtime() - tDepth0
 
-                        // Simpan pratinjau peta kedalaman (hitam = jauh, putih = dekat)
                         val previewFile = File(
                             getExternalFilesDir(Environment.DIRECTORY_PICTURES),
                             "depth_preview.png"
@@ -158,7 +157,7 @@ class MainActivity : AppCompatActivity() {
         val scale = minOf(1f, 512f / maxOf(raw.width, raw.height))
         var w = (raw.width * scale).toInt()
         var h = (raw.height * scale).toInt()
-        w = maxOf(2, (w / 2) * 2)   // harus genap untuk encoder
+        w = maxOf(2, (w / 2) * 2)
         h = maxOf(2, (h / 2) * 2)
         return Bitmap.createScaledBitmap(raw, w, h, true)
     }
