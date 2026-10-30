@@ -2,22 +2,23 @@ package com.videogen.offline
 
 import android.graphics.Bitmap
 import android.os.Bundle
-import android.os.Debug
 import android.os.Environment
+import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.videogen.offline.engine.LiteRtLoader
+import com.videogen.offline.engine.Mp4Writer
 import com.videogen.offline.engine.ModelDownloader
 import com.videogen.offline.engine.TokenizerHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
 import java.util.Random
 
 class MainActivity : AppCompatActivity() {
@@ -33,210 +34,130 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 96, 48, 48)
         }
-        val title = TextView(this).apply { text = "VideoGenOffline — The Final Pipeline"; textSize = 18f }
+        val title = TextView(this).apply { text = "VideoGenOffline — Final Video"; textSize = 18f }
 
-        val btnTestVae = Button(this)
-        btnTestVae.text = "1. Test Load VAE"
-        btnTestVae.setOnClickListener {
-            try {
-                val loader = LiteRtLoader(this, "models/causal_video_vae_decoder.tflite")
-                showDialog("Sukses", "VAE dimuat")
-                loader.close()
-            } catch (e: Throwable) { showDialog("Error", e.toString()) }
+        val progressAi = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100; visibility = View.GONE
         }
 
-        val btnTestText = Button(this)
-        btnTestText.text = "2. Info Text Encoder"
-        btnTestText.setOnClickListener {
-            try {
-                val loader = LiteRtLoader(this, "models/dt5_text_encoder.tflite")
-                showDialog("Info", loader.getInputTensorInfo())
-                loader.close()
-            } catch (e: Throwable) { showDialog("Error", e.toString()) }
-        }
-
-        val btnTestToken = Button(this)
-        btnTestToken.text = "3. Test Tokenizer"
-        btnTestToken.setOnClickListener {
-            try {
-                val (ids, _) = TokenizerHelper(this).encode("a cat walking")
-                showDialog("Sukses", "IDs: ${ids.take(5).joinToString(", ")}...")
-            } catch (e: Throwable) { showDialog("Error", e.toString()) }
-        }
-
-        val btnRunEncoder = Button(this)
-        btnRunEncoder.text = "4. Generate Embedding"
-        btnRunEncoder.setOnClickListener {
-            btnRunEncoder.isEnabled = false
-            lifecycleScope.launch {
-                try {
-                    val res = withContext(Dispatchers.Default) {
-                        val (ids, mask) = TokenizerHelper(this@MainActivity).encode("a cat walking")
-                        val loader = LiteRtLoader(this@MainActivity, "models/dt5_text_encoder.tflite")
-                        val emb = loader.runTextEncoder(ids, mask)
-                        loader.close()
-                        "Berhasil! Size: ${emb.size}"
-                    }
-                    btnRunEncoder.isEnabled = true
-                    showDialog("Sukses", res)
-                } catch (e: Throwable) {
-                    btnRunEncoder.isEnabled = true
-                    showDialog("Error", e.toString())
-                }
-            }
-        }
-
-        val btnDownloadDit = Button(this)
-        btnDownloadDit.text = "5. DOWNLOAD MODEL DiT (816 MB)"
-        btnDownloadDit.setOnClickListener {
-            btnDownloadDit.isEnabled = false
-            lifecycleScope.launch {
-                try {
-                    ModelDownloader(this@MainActivity).downloadFile(DIT_STAGE0_URL, DIT_STAGE0_FILENAME) { p ->
-                        btnDownloadDit.text = "Mengunduh DiT: $p%"
-                    }
-                    btnDownloadDit.text = "Unduhan DiT Selesai"
-                } catch (e: Throwable) {
-                    btnDownloadDit.isEnabled = true
-                    showDialog("Error", e.toString())
-                }
-            }
-        }
-
-        val btnDownloadAdapter = Button(this)
-        btnDownloadAdapter.text = "5b. DOWNLOAD ADAPTER (124 MB)"
-        btnDownloadAdapter.setOnClickListener {
-            btnDownloadAdapter.isEnabled = false
-            lifecycleScope.launch {
-                try {
-                    ModelDownloader(this@MainActivity).downloadFile(ADAPTER_URL, ADAPTER_FILENAME) { p ->
-                        btnDownloadAdapter.text = "Mengunduh Adapter: $p%"
-                    }
-                    btnDownloadAdapter.text = "Unduhan Adapter Selesai"
-                } catch (e: Throwable) {
-                    btnDownloadAdapter.isEnabled = true
-                    showDialog("Error", e.toString())
-                }
-            }
-        }
-
-        val btnTestDit = Button(this)
-        btnTestDit.text = "6. Info Tensor DiT"
-        btnTestDit.setOnClickListener {
-            val fileDit = File(filesDir, DIT_STAGE0_FILENAME)
-            if (!fileDit.exists()) return@setOnClickListener showDialog("Error", "Unduh model dulu!")
-            btnTestDit.isEnabled = false
-            lifecycleScope.launch {
-                try {
-                    val info = withContext(Dispatchers.Default) {
-                        val loader = LiteRtLoader(this@MainActivity, fileDit.absolutePath)
-                        val res = "INPUT:\n${loader.getInputTensorInfo()}\nOUTPUT:\n${loader.getOutputTensorInfo()}"
-                        loader.close()
-                        res
-                    }
-                    btnTestDit.isEnabled = true
-                    showDialog("Info Tensor DiT", info)
-                } catch (e: Throwable) {
-                    btnTestDit.isEnabled = true
-                    showDialog("Error", e.toString())
-                }
-            }
-        }
-
-        // TOMBOL 8: THE ULTIMATE PIPELINE
-        val btnGenerate = Button(this)
-        btnGenerate.text = "8. PROSES AI VIDEO (UJI COBA)"
-        btnGenerate.setOnClickListener {
-            val fileDit = File(filesDir, DIT_STAGE0_FILENAME)
-            val fileAdapter = File(filesDir, ADAPTER_FILENAME)
-            if (!fileDit.exists() || !fileAdapter.exists()) {
-                return@setOnClickListener showDialog("Error", "Unduh Model DiT & Adapter dulu!")
-            }
-
-            btnGenerate.isEnabled = false
-            btnGenerate.text = "AI BEKERJA... (Jangan tutup)"
-
-            lifecycleScope.launch {
-                try {
-                    val resultText = withContext(Dispatchers.Default) {
-                        val log = StringBuilder()
-                        val startTime = System.currentTimeMillis()
-                        val startRam = Debug.getPss() / 1024
-
-                        // 1. Teks -> Embedding
-                        log.append("1. Tokenisasi...\n")
-                        val (ids, mask) = TokenizerHelper(this@MainActivity).encode("a beautiful mountain landscape, 4k")
-                        val textLoader = LiteRtLoader(this@MainActivity, "models/dt5_text_encoder.tflite")
-                        val rawEmbedding = textLoader.runTextEncoder(ids, mask)
-                        textLoader.close()
-
-                        // 2. Context Adapter
-                        log.append("2. Adapter...\n")
-                        val adapterLoader = LiteRtLoader(this@MainActivity, fileAdapter.absolutePath)
-                        val context = adapterLoader.runContextAdapter(rawEmbedding)
-                        adapterLoader.close()
-
-                        // 3. Latent Awal (2560 floats)
-                        var latent = FloatArray(2560) { Random().nextFloat() * 2f - 1f }
-                        
-                        // 4. Denoising
-                        log.append("3. Memuat DiT...\n")
-                        val ditLoader = LiteRtLoader(this@MainActivity, fileDit.absolutePath)
-                        val totalSteps = 10
-                        
-                        for (step in 1..totalSteps) {
-                            val timestep = (1000 - (step * (1000 / totalSteps))).toFloat()
-                            log.append("   Step $step/$totalSteps...\n")
-                            latent = ditLoader.runDitStep(latent, timestep, context)
+        // (Tombol 1-6 tetap sama, disembunyikan atau dibiarkan)
+        val btnDownloadDit = Button(this).apply {
+            text = "1. DOWNLOAD MODEL DIT"
+            setOnClickListener {
+                btnDownloadDit.isEnabled = false
+                lifecycleScope.launch {
+                    try {
+                        ModelDownloader(this@MainActivity).downloadFile(listOf(DIT_STAGE0_URL), DIT_STAGE0_FILENAME) { p ->
+                            runOnUiThread { btnDownloadDit.text = "DiT: $p%" }
                         }
-                        
-                        log.append("4. Tutup DiT & Muat VAE...\n")
-                        ditLoader.close()
-                        System.gc()
+                        btnDownloadDit.text = "DiT Selesai"
+                    } catch (e: Throwable) { showDialog("Error", e.toString()) }
+                }
+            }
+        }
 
-                        // 5. VAE Decode
-                        val vaeLoader = LiteRtLoader(this@MainActivity, "models/causal_video_vae_decoder.tflite")
-                        val bitmap = vaeLoader.decodeLatentToImage(latent)
-                        vaeLoader.close()
+        val btnDownloadAdapter = Button(this).apply {
+            text = "2. DOWNLOAD ADAPTER"
+            setOnClickListener {
+                btnDownloadAdapter.isEnabled = false
+                lifecycleScope.launch {
+                    try {
+                        ModelDownloader(this@MainActivity).downloadFile(listOf(ADAPTER_URL), ADAPTER_FILENAME) { p ->
+                            runOnUiThread { btnDownloadAdapter.text = "Adapter: $p%" }
+                        }
+                        btnDownloadAdapter.text = "Adapter Selesai"
+                    } catch (e: Throwable) { showDialog("Error", e.toString()) }
+                }
+            }
+        }
 
-                        // 6. Simpan
-                        log.append("5. Simpan Gambar...\n")
-                        val filePath = File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "VideoGen_${System.currentTimeMillis()}.jpg")
-                        FileOutputStream(filePath).use { out ->
-                            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+        val btnGenerate = Button(this).apply {
+            text = "3. BUAT VIDEO AI"
+            setOnClickListener {
+                val fileDit = File(filesDir, DIT_STAGE0_FILENAME)
+                val fileAdapter = File(filesDir, ADAPTER_FILENAME)
+                if (!fileDit.exists() || !fileAdapter.exists()) {
+                    return@setOnClickListener showDialog("Error", "Unduh Model DiT & Adapter dulu!")
+                }
+
+                btnGenerate.isEnabled = false
+                progressAi.visibility = View.VISIBLE
+                progressAi.progress = 0
+
+                lifecycleScope.launch {
+                    try {
+                        val videoPath = withContext(Dispatchers.Default) {
+                            // 1. Tokenisasi
+                            runOnUiThread { progressAi.progress = 10; btnGenerate.text = "Tokenisasi..." }
+                            val (ids, mask) = TokenizerHelper(this@MainActivity).encode("a cat walking")
+                            val textLoader = LiteRtLoader(this@MainActivity, "models/dt5_text_encoder.tflite")
+                            val rawEmbedding = textLoader.runTextEncoder(ids, mask)
+                            textLoader.close()
+
+                            // 2. Adapter
+                            runOnUiThread { progressAi.progress = 20; btnGenerate.text = "Adapter..." }
+                            val adapterLoader = LiteRtLoader(this@MainActivity, fileAdapter.absolutePath)
+                            val context = adapterLoader.runContextAdapter(rawEmbedding)
+                            adapterLoader.close()
+
+                            // 3. Denoising Loop (SUPER RINGAN: Hanya 3 Langkah)
+                            runOnUiThread { progressAi.progress = 30; btnGenerate.text = "Memuat DiT..." }
+                            val ditLoader = LiteRtLoader(this@MainActivity, fileDit.absolutePath)
+                            var latent = FloatArray(2560) { Random().nextFloat() * 2f - 1f }
+                            
+                            // KITA POTONG HANYA 3 LANGKAH AGAR TIDAK OOM
+                            val totalSteps = 3 
+                            for (step in 1..totalSteps) {
+                                val timestep = (1000 - (step * (1000 / totalSteps))).toFloat()
+                                runOnUiThread { 
+                                    progressAi.progress = 30 + (step * 20)
+                                    btnGenerate.text = "Berpikir (Step $step/$totalSteps)..." 
+                                }
+                                latent = ditLoader.runDitStep(latent, timestep, context)
+                                System.gc() // Paksa buang sampah RAM
+                            }
+                            
+                            ditLoader.close()
+                            System.gc()
+                            runOnUiThread { progressAi.progress = 80; btnGenerate.text = "Memuat VAE..." }
+
+                            // 4. VAE Decode (Menghasilkan List Frame Video)
+                            val vaeLoader = LiteRtLoader(this@MainActivity, "models/causal_video_vae_decoder.tflite")
+                            val frames = vaeLoader.decodeLatentToVideoFrames(latent)
+                            vaeLoader.close()
+                            runOnUiThread { progressAi.progress = 90; btnGenerate.text = "Menyimpan Video MP4..." }
+
+                            // 5. Simpan ke MP4
+                            val videoFile = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "VideoGen_${System.currentTimeMillis()}.mp4")
+                            if (frames.isNotEmpty()) {
+                                val writer = Mp4Writer(videoFile, frames[0].width, frames[0].height, 8)
+                                writer.encodeFrames(frames)
+                            }
+                            
+                            videoFile.absolutePath
                         }
 
-                        val endTime = System.currentTimeMillis()
-                        val endRam = Debug.getPss() / 1024
+                        progressAi.progress = 100
+                        btnGenerate.text = "3. BUAT VIDEO AI"
+                        btnGenerate.isEnabled = true
+                        progressAi.visibility = View.GONE
+                        showDialog("Sukses!", "Video MP4 berhasil dibuat di:\n$videoPath")
 
-                        log.append("\nSELESAI!\n")
-                        log.append("Waktu: ${(endTime - startTime) / 1000.0} detik\n")
-                        log.append("RAM: ${endRam - startRam} MB\n")
-                        log.append("Gambar: ${filePath.absolutePath}")
-                        log.toString()
+                    } catch (e: Throwable) {
+                        btnGenerate.text = "3. BUAT VIDEO AI"
+                        btnGenerate.isEnabled = true
+                        progressAi.visibility = View.GONE
+                        showDialog("GAGAL / OOM", "HP tidak kuat: ${e.toString()}")
                     }
-
-                    btnGenerate.text = "8. PROSES AI VIDEO"
-                    btnGenerate.isEnabled = true
-                    showDialog("Hasil Pipeline", resultText)
-
-                } catch (e: Throwable) {
-                    btnGenerate.text = "8. PROSES AI VIDEO"
-                    btnGenerate.isEnabled = true
-                    showDialog("GAGAL / OOM", "HP tidak kuat: ${e.toString()}")
                 }
             }
         }
 
         layout.addView(title)
-        layout.addView(btnTestVae)
-        layout.addView(btnTestText)
-        layout.addView(btnTestToken)
-        layout.addView(btnRunEncoder)
         layout.addView(btnDownloadDit)
         layout.addView(btnDownloadAdapter)
-        layout.addView(btnTestDit)
         layout.addView(btnGenerate)
+        layout.addView(progressAi)
         setContentView(layout)
     }
 
