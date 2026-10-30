@@ -1,152 +1,220 @@
 package com.videogen.offline
 
+import android.content.ContentValues
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.os.SystemClock
+import android.provider.MediaStore
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import com.videogen.offline.engine.*
+import com.videogen.offline.engine.DepthEstimator
+import com.videogen.offline.engine.Mp4Writer
+import com.videogen.offline.engine.ParallaxRenderer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.Random
+import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity() {
-    
-    private val DIT_URL = "https://huggingface.co/litert-community/Neo_Dragon/resolve/main/dit_stage0_10x16_int4.tflite"
-    private val ADAPTER_URL = "https://huggingface.co/litert-community/Neo_Dragon/resolve/main/context_adapter_dynamic_int8.tflite"
+
+    private val MODEL_PATH = "models/midas_v2.tflite"
+    private val TOTAL_FRAMES = 60
+    private val FPS = 30
+
+    private var selectedPhoto: Bitmap? = null
+    private lateinit var btnPick: Button
+
+    private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            try {
+                val bmp = loadScaled(uri)
+                selectedPhoto = bmp
+                btnPick.text = "1. Foto dipilih (${bmp.width}x${bmp.height}) - ganti"
+            } catch (e: Throwable) {
+                showDialog("Gagal membaca foto", e.toString())
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         val layout = LinearLayout(this)
         layout.orientation = LinearLayout.VERTICAL
         layout.setPadding(48, 96, 48, 48)
-        
+
         val title = TextView(this)
-        title.text = "VideoGenOffline — 2.5D Parallax"
+        title.text = "VideoGenOffline — Parallax 2.5D"
         title.textSize = 18f
 
-        val progressAi = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
-        progressAi.max = 100
-        progressAi.visibility = View.GONE
+        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
+        progress.max = 100
+        progress.visibility = View.GONE
 
-        val btnDownloadDit = Button(this)
-        btnDownloadDit.text = "1. Download Model DiT"
-        btnDownloadDit.setOnClickListener {
-            btnDownloadDit.isEnabled = false
-            lifecycleScope.launch {
-                try {
-                    ModelDownloader(this@MainActivity).downloadFile(listOf(DIT_URL), "dit_stage0.tflite") { p -> 
-                        runOnUiThread { btnDownloadDit.text = "DiT: $p%" } 
-                    }
-                    btnDownloadDit.text = "DiT Selesai"
-                } catch (e: Throwable) { showDialog("Error", e.toString()) }
-            }
-        }
-
-        val btnDownloadAdapter = Button(this)
-        btnDownloadAdapter.text = "2. Download Adapter"
-        btnDownloadAdapter.setOnClickListener {
-            btnDownloadAdapter.isEnabled = false
-            lifecycleScope.launch {
-                try {
-                    ModelDownloader(this@MainActivity).downloadFile(listOf(ADAPTER_URL), "context_adapter.tflite") { p -> 
-                        runOnUiThread { btnDownloadAdapter.text = "Adapter: $p%" } 
-                    }
-                    btnDownloadAdapter.text = "Adapter Selesai"
-                } catch (e: Throwable) { showDialog("Error", e.toString()) }
-            }
-        }
+        btnPick = Button(this)
+        btnPick.text = "1. Pilih foto (disarankan, bukan gambar dummy)"
+        btnPick.setOnClickListener { pickImage.launch("image/*") }
 
         val btnGenerate = Button(this)
-        btnGenerate.text = "3. BUAT VIDEO PARALLAX (RINGAN)"
+        btnGenerate.text = "2. BUAT VIDEO PARALLAX"
         btnGenerate.setOnClickListener {
-            val fileDit = File(filesDir, "dit_stage0.tflite")
-            val fileAdapter = File(filesDir, "context_adapter.tflite")
-            if (!fileDit.exists() || !fileAdapter.exists()) {
-                showDialog("Error", "Unduh Model DiT & Adapter dulu!")
-                return@setOnClickListener
-            }
-
             btnGenerate.isEnabled = false
-            progressAi.visibility = View.VISIBLE
-            progressAi.progress = 0
+            progress.visibility = View.VISIBLE
+            progress.progress = 0
 
             lifecycleScope.launch {
                 try {
-                    val videoPath = withContext(Dispatchers.Default) {
-                        runOnUiThread { progressAi.progress = 10; btnGenerate.text = "AI Membuat Gambar..." }
-                        val (ids, mask) = TokenizerHelper(this@MainActivity).encode("a beautiful mountain landscape")
-                        val textLoader = LiteRtLoader(this@MainActivity, "models/dt5_text_encoder.tflite")
-                        val rawEmbedding = textLoader.runTextEncoder(ids, mask)
-                        textLoader.close()
+                    val report = withContext(Dispatchers.Default) {
+                        val t0 = SystemClock.elapsedRealtime()
 
-                        val adapterLoader = LiteRtLoader(this@MainActivity, fileAdapter.absolutePath)
-                        val context = adapterLoader.runContextAdapter(rawEmbedding)
-                        adapterLoader.close()
+                        runOnUiThread { progress.progress = 10; btnGenerate.text = "Menyiapkan gambar..." }
+                        val base = selectedPhoto ?: createDummyLandscape(512, 512)
 
-                        val ditLoader = LiteRtLoader(this@MainActivity, fileDit.absolutePath)
-                        var latent = FloatArray(2560) { Random().nextFloat() * 2f - 1f }
-                        latent = ditLoader.runDitStep(latent, 500f, context)
-                        ditLoader.close()
-                        System.gc()
+                        runOnUiThread { progress.progress = 25; btnGenerate.text = "Menganalisis kedalaman..." }
+                        val tDepth0 = SystemClock.elapsedRealtime()
+                        val estimator = DepthEstimator(this@MainActivity, MODEL_PATH)
+                        val modelInfo = estimator.inputInfo()
+                        val depth = try { estimator.estimateDepth(base) } finally { estimator.close() }
+                        val depthMs = SystemClock.elapsedRealtime() - tDepth0
 
-                        runOnUiThread { progressAi.progress = 40; btnGenerate.text = "Membuat Gambar..." }
-                        val vaeLoader = LiteRtLoader(this@MainActivity, "models/causal_video_vae_decoder.tflite")
-                        val frames = vaeLoader.decodeLatentToVideoFrames(latent)
-                        vaeLoader.close()
-                        
-                        if (frames.isEmpty()) throw Exception("Gagal membuat gambar dasar.")
-                        val baseImage = frames[0]
+                        // Simpan pratinjau peta kedalaman (hitam = jauh, putih = dekat)
+                        val previewFile = File(
+                            getExternalFilesDir(Environment.DIRECTORY_PICTURES),
+                            "depth_preview.png"
+                        )
+                        saveDepthPreview(depth.values, depth.width, depth.height, previewFile)
 
-                        runOnUiThread { progressAi.progress = 60; btnGenerate.text = "Menganalisis Kedalaman..." }
-                        val depthEstimator = DepthEstimator(this@MainActivity, "models/midas_v2.tflite")
-                        val depthMap = depthEstimator.estimateDepth(baseImage)
-                        depthEstimator.close()
+                        runOnUiThread { progress.progress = 50; btnGenerate.text = "Merender & encode..." }
+                        val renderer = ParallaxRenderer(base, depth)
+                        val videoFile = File(
+                            getExternalFilesDir(Environment.DIRECTORY_MOVIES),
+                            "Parallax_${System.currentTimeMillis()}.mp4"
+                        )
+                        val tEnc0 = SystemClock.elapsedRealtime()
+                        Mp4Writer(videoFile, base.width, base.height, FPS).encode(TOTAL_FRAMES) { i ->
+                            renderer.renderFrame(i, TOTAL_FRAMES)
+                        }
+                        val encMs = SystemClock.elapsedRealtime() - tEnc0
 
-                        runOnUiThread { progressAi.progress = 80; btnGenerate.text = "Merender Video 3D..." }
-                        val renderer = ParallaxRenderer()
-                        val videoFrames = renderer.generateFrames(baseImage, depthMap, baseImage.width, baseImage.height)
+                        val galleryPath = saveToGallery(videoFile)
+                        val totalMs = SystemClock.elapsedRealtime() - t0
 
-                        runOnUiThread { progressAi.progress = 90; btnGenerate.text = "Menyimpan MP4..." }
-                        val videoFile = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "Parallax_${System.currentTimeMillis()}.mp4")
-                        val writer = Mp4Writer(videoFile, baseImage.width, baseImage.height, 30)
-                        writer.encodeFrames(videoFrames)
-                        
-                        videoFile.absolutePath
+                        "Video: ${videoFile.length() / 1024} KB, ${TOTAL_FRAMES} frame @ ${FPS} fps\n" +
+                            "Ukuran: ${base.width}x${base.height}\n\n" +
+                            "Model: $modelInfo\n" +
+                            "Rentang kedalaman mentah: ${depth.rawMin} .. ${depth.rawMax}\n\n" +
+                            "Waktu kedalaman: ${depthMs / 1000.0} dtk\n" +
+                            "Waktu render+encode: ${encMs / 1000.0} dtk\n" +
+                            "Total: ${totalMs / 1000.0} dtk\n\n" +
+                            "Galeri: $galleryPath\n" +
+                            "Pratinjau kedalaman: ${previewFile.absolutePath}"
                     }
 
-                    progressAi.progress = 100
-                    btnGenerate.text = "3. BUAT VIDEO PARALLAX"
-                    btnGenerate.isEnabled = true
-                    progressAi.visibility = View.GONE
-                    showDialog("Sukses!", "Video Parallax berhasil dibuat:\n$videoPath")
-
+                    showDialog("Sukses", report)
                 } catch (e: Throwable) {
-                    btnGenerate.text = "3. BUAT VIDEO PARALLAX"
+                    showDialog("GAGAL", e.toString())
+                } finally {
+                    btnGenerate.text = "2. BUAT VIDEO PARALLAX"
                     btnGenerate.isEnabled = true
-                    progressAi.visibility = View.GONE
-                    showDialog("GAGAL", "Error: ${e.toString()}")
+                    progress.visibility = View.GONE
                 }
             }
         }
 
         layout.addView(title)
-        layout.addView(btnDownloadDit)
-        layout.addView(btnDownloadAdapter)
+        layout.addView(btnPick)
         layout.addView(btnGenerate)
-        layout.addView(progressAi)
+        layout.addView(progress)
         setContentView(layout)
     }
 
+    private fun loadScaled(uri: Uri): Bitmap {
+        val bounds = BitmapFactory.Options()
+        bounds.inJustDecodeBounds = true
+        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 1024) sample *= 2
+        val opts = BitmapFactory.Options()
+        opts.inSampleSize = sample
+        val raw = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+            ?: throw IllegalStateException("Foto tidak bisa dibaca")
+
+        val scale = minOf(1f, 512f / maxOf(raw.width, raw.height))
+        var w = (raw.width * scale).toInt()
+        var h = (raw.height * scale).toInt()
+        w = maxOf(2, (w / 2) * 2)   // harus genap untuk encoder
+        h = maxOf(2, (h / 2) * 2)
+        return Bitmap.createScaledBitmap(raw, w, h, true)
+    }
+
+    private fun saveDepthPreview(values: FloatArray, w: Int, h: Int, file: File) {
+        val px = IntArray(w * h) {
+            val g = (values[it] * 255f).toInt().coerceIn(0, 255)
+            (0xFF shl 24) or (g shl 16) or (g shl 8) or g
+        }
+        val bmp = Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+        FileOutputStream(file).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    private fun saveToGallery(file: File): String {
+        val values = ContentValues()
+        values.put(MediaStore.Video.Media.DISPLAY_NAME, file.name)
+        values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+        values.put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/VideoGen")
+        val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+            ?: return "gagal menyalin ke galeri"
+        contentResolver.openOutputStream(uri)?.use { out ->
+            file.inputStream().use { it.copyTo(out) }
+        }
+        return "Movies/VideoGen/${file.name}"
+    }
+
+    private fun createDummyLandscape(width: Int, height: Int): Bitmap {
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint()
+
+        paint.color = Color.parseColor("#87CEEB")
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+
+        paint.color = Color.YELLOW
+        canvas.drawCircle(width * 0.8f, height * 0.2f, 50f, paint)
+
+        paint.color = Color.parseColor("#8B4513")
+        val path = Path()
+        path.moveTo(width * 0.1f, height * 0.7f)
+        path.lineTo(width * 0.5f, height * 0.2f)
+        path.lineTo(width * 0.9f, height * 0.7f)
+        path.close()
+        canvas.drawPath(path, paint)
+
+        paint.color = Color.parseColor("#228B22")
+        canvas.drawRect(0f, height * 0.7f, width.toFloat(), height.toFloat(), paint)
+
+        return bitmap
+    }
+
     private fun showDialog(title: String, message: String) {
-        AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("OK", null).show()
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("OK", null)
+            .show()
     }
 }
