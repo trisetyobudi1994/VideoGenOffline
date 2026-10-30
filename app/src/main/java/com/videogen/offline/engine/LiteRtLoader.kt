@@ -46,7 +46,7 @@ class LiteRtLoader(context: Context, pathOrAsset: String) {
         // Fallback ke CPU Extreme (Hemat RAM)
         if (interp == null) {
             val options = Interpreter.Options()
-            options.setNumThreads(1)
+            options.setNumThreads(1) // 1 Thread agar RAM tidak meledak
             options.setUseXNNPACK(false)
             interp = Interpreter(model, options)
         }
@@ -69,11 +69,43 @@ class LiteRtLoader(context: Context, pathOrAsset: String) {
         }
     }
 
+    fun getInputTensorInfo(): String {
+        val sb = StringBuilder()
+        for (i in 0 until interpreter.inputTensorCount) {
+            val t = interpreter.getInputTensor(i)
+            sb.append("Input $i: ${t.name()}\nShape: ${t.shape().contentToString()}\nType: ${t.dataType()}\n\n")
+        }
+        return sb.toString()
+    }
+
+    // FUNGSI FASE 4
+    fun runTextEncoder(ids: IntArray, mask: IntArray): FloatArray {
+        val inputTensor0 = interpreter.getInputTensor(0)
+        val inputTensor1 = interpreter.getInputTensor(1)
+        val idBuffer = ByteBuffer.allocateDirect(inputTensor0.numBytes()).order(ByteOrder.nativeOrder())
+        val maskBuffer = ByteBuffer.allocateDirect(inputTensor1.numBytes()).order(ByteOrder.nativeOrder())
+        
+        val ib0 = idBuffer.asIntBuffer()
+        for (i in 0 until inputTensor0.numBytes() / 4) ib0.put(if (i < ids.size) ids[i] else 0)
+        val ib1 = maskBuffer.asIntBuffer()
+        for (i in 0 until inputTensor1.numBytes() / 4) ib1.put(if (i < mask.size) mask[i] else 0)
+
+        val outSize = interpreter.getOutputTensor(0).shape().fold(1) { acc, i -> acc * i }
+        val outputBuffer = ByteBuffer.allocateDirect(outSize * 4).order(ByteOrder.nativeOrder())
+        
+        interpreter.runForMultipleInputsOutputs(arrayOf<Any>(idBuffer, maskBuffer), mapOf(0 to outputBuffer))
+        outputBuffer.rewind()
+        val result = FloatArray(outSize)
+        outputBuffer.asFloatBuffer().get(result)
+        return result
+    }
+
     fun runContextAdapter(embedding: FloatArray): FloatArray {
         val inputBuffer = ByteBuffer.allocateDirect(embedding.size * 4).order(ByteOrder.nativeOrder())
         inputBuffer.asFloatBuffer().put(embedding)
         val outSize = interpreter.getOutputTensor(0).shape().fold(1) { acc, i -> acc * i }
         val outputBuffer = ByteBuffer.allocateDirect(outSize * 4).order(ByteOrder.nativeOrder())
+        
         interpreter.run(inputBuffer, outputBuffer)
         outputBuffer.rewind()
         val result = FloatArray(outSize)
@@ -81,11 +113,10 @@ class LiteRtLoader(context: Context, pathOrAsset: String) {
         return result
     }
 
+    // FUNGSI FASE 5 (DiT)
     fun runDitStep(latent: FloatArray, timestep: Float, context: FloatArray): FloatArray {
         val inputBuffers = mutableListOf<ByteBuffer>()
-        val inputCount = interpreter.inputTensorCount
-
-        for (i in 0 until inputCount) {
+        for (i in 0 until interpreter.inputTensorCount) {
             val tensor = interpreter.getInputTensor(i)
             val buffer = ByteBuffer.allocateDirect(tensor.numBytes()).order(ByteOrder.nativeOrder())
             val requiredLen = tensor.numBytes() / 4
@@ -113,13 +144,13 @@ class LiteRtLoader(context: Context, pathOrAsset: String) {
         return result
     }
 
-    // UBAH: Mengembalikan List<Bitmap> (Video Frame)
+    // FUNGSI VAE DECODE (Menjadi Frame Video)
     fun decodeLatentToVideoFrames(latent: FloatArray): List<Bitmap> {
         val inputBuffer = ByteBuffer.allocateDirect(latent.size * 4).order(ByteOrder.nativeOrder())
         inputBuffer.asFloatBuffer().put(latent)
 
         val outputTensor = interpreter.getOutputTensor(0)
-        val outShape = outputTensor.shape() // Contoh: [1, 3, 8, 64, 64]
+        val outShape = outputTensor.shape()
         val outSize = outShape.fold(1) { acc, i -> acc * i }
         val outputBuffer = ByteBuffer.allocateDirect(outSize * 4).order(ByteOrder.nativeOrder())
 
@@ -130,8 +161,6 @@ class LiteRtLoader(context: Context, pathOrAsset: String) {
         outputBuffer.asFloatBuffer().get(floatPixels)
 
         val frames = mutableListOf<Bitmap>()
-        
-        // Ekstrak dimensi (Asumsi format [1, 3, T, H, W])
         val timeDim = outShape[2]
         val height = outShape[3]
         val width = outShape[4]
