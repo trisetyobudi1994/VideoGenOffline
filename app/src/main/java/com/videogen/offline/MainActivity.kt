@@ -15,7 +15,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.videogen.offline.engine.Mp4Writer
-import com.videogen.offline.engine.ParticleEngine
+import com.videogen.offline.engine.SwarmEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -33,11 +33,11 @@ class MainActivity : AppCompatActivity() {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(48, 96, 48, 48); setBackgroundColor(Color.parseColor("#F8F9FA"))
         }
-        val title = TextView(this).apply { text = "Generative Particle Engine"; textSize = 24f; setTextColor(Color.BLACK); setPadding(0, 0, 0, 16) }
-        val subtitle = TextView(this).apply { text = "Teks -> Video (100% Matematika Murni)"; textSize = 14f; setTextColor(Color.GRAY); setPadding(0, 0, 0, 32) }
-        promptInput = EditText(this).apply { hint = "Ketik ide video (misal: fire, water, galaxy)"; setPadding(24, 24, 24, 24) }
+        val title = TextView(this).apply { text = "Evolving Neural Swarm"; textSize = 24f; setTextColor(Color.BLACK); setPadding(0, 0, 0, 16) }
+        val subtitle = TextView(this).apply { text = "AI belajar & berevolusi secara mandiri"; textSize = 14f; setTextColor(Color.GRAY); setPadding(0, 0, 0, 32) }
+        promptInput = EditText(this).apply { hint = "Ketik ide (fire, water, galaxy)"; setPadding(24, 24, 24, 24) }
         btnGenerate = Button(this).apply {
-            text = "Buat Video Partikel"
+            text = "Mulai Evolusi AI"
             setOnClickListener { generateVideo(promptInput.text.toString().ifEmpty { "fire" }) }
         }
         progressBar = ProgressBar(this).apply { visibility = View.GONE; setPadding(0, 32, 0, 0) }
@@ -47,14 +47,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun generateVideo(prompt: String) {
         btnGenerate.isEnabled = false; progressBar.visibility = View.VISIBLE
-        Toast.makeText(this, "Merender Partikel...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "AI Berevolusi...", Toast.LENGTH_SHORT).show()
         lifecycleScope.launch {
             try {
                 val videoFile = withContext(Dispatchers.Default) {
-                    val outFile = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "Particle_${System.currentTimeMillis()}.mp4")
-                    val engine = ParticleEngine(W, H, prompt)
+                    val outFile = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "Swarm_${System.currentTimeMillis()}.mp4")
+                    val engine = SwarmEngine(W, H, prompt)
+                    
                     Mp4Writer(outFile, W, H, FPS).encode(TOTAL_FRAMES) { i ->
-                        engine.renderFrame((i.toFloat() / FPS) * 2.0f)
+                        engine.renderFrame(i) // AI berpikir & berevolusi di sini
                     }
                     saveToGallery(outFile); outFile
                 }
@@ -75,7 +76,7 @@ class MainActivity : AppCompatActivity() {
             setMediaItem(MediaItem.fromUri(Uri.fromFile(file))); prepare(); playWhenReady = true
         }
         playerView.player = exoPlayer
-        AlertDialog.Builder(this).setTitle("Video Berhasil!").setView(container)
+        AlertDialog.Builder(this).setTitle("Video AI Berhasil!").setView(container)
             .setPositiveButton("Tutup") { _,_ -> exoPlayer?.release() }
             .setOnDismissListener { exoPlayer?.release() }.show()
     }
