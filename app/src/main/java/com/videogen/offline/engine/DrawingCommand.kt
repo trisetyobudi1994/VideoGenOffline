@@ -1,22 +1,26 @@
 package com.videogen.offline.engine
 
 data class DrawShape(
-    val shape: String,           // circle, ellipse, rect, triangle, line, polygon, arc
-    val x: Float,                // 0-100 (center)
-    val y: Float,                // 0-100 (center)
-    val w: Float,                // 0-100
-    val h: Float,                // 0-100
-    val color: String,           // #RRGGBB
-    val layer: Int,              // draw order (low = back)
-    val animation: String,       // static, flap, sway, breathe, walk, float, rotate, blink
-    val points: List<Pair<Float, Float>> = emptyList()
+    val id: String,           // Nama unik: "head", "left_wing", "body", "eye_l"
+    val shape: String,        // circle, ellipse, rect, triangle, polygon, line, arc
+    val x: Float, val y: Float,
+    val w: Float, val h: Float,
+    val rotation: Float,      // derajat
+    val color: String,
+    val layer: Int
 )
 
-data class UniversalScene(
+data class Keyframe(
+    val time: Float,          // 0.0 - 1.0
+    val shapes: List<DrawShape>
+)
+
+data class TemporalScene(
+    val prompt: String,
     val environment: String,
     val weather: String,
     val time: String,
     val skyTop: String,
     val skyBottom: String,
-    val shapes: List<DrawShape>
+    val keyframes: List<Keyframe>
 )

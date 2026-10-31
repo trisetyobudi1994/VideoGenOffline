@@ -3,64 +3,85 @@ package com.videogen.offline.engine
 import com.google.ai.client.generativeai.GenerativeModel
 import org.json.JSONObject
 
-data class ParsedScene(
-    val subject: String,
-    val action: String,
-    val colorHex: String,
-    val bodyType: String,      // humanoid, quadruped, vehicle, bird, abstract
-    val features: List<String>, // wings, antenna, tail, flame, etc
-    val environment: String,    // sky, ocean, space, forest, city, sunset
-    val weather: String,        // rain, snow, stars, fire, clear
-    val timeOfDay: String       // day, night, sunset
-)
-
 class GeminiBrain(apiKey: String) {
-    private val model = GenerativeModel(
-        modelName = "gemini-1.5-flash",
-        apiKey = apiKey
-    )
+    private val model = GenerativeModel(modelName = "gemini-1.5-flash", apiKey = apiKey)
 
-    suspend fun analyzePrompt(prompt: String): ParsedScene {
-        val systemInstruction = """
-            Anda adalah mesin penerjemah bahasa ke parameter rendering visual.
-            Baca input user dan tentukan parameter berikut:
-            
-            1. subject: nama objek utama
-            2. action: gerakan (berjalan, berlari, terbang, berenang, melayang, menari)
-            3. color: hex warna utama objek
-            4. body_type: "humanoid", "quadruped", "vehicle", "bird", atau "abstract"
-            5. features: array fitur (["wings", "antenna", "tail", "horns", "cape", "sword"])
-            6. environment: "sky", "ocean", "space", "forest", "city", "desert", "mountain"
-            7. weather: "rain", "snow", "stars", "fire", "clear"
-            8. time_of_day: "day", "night", "sunset", "dawn"
-            
-            Balas HANYA dengan JSON valid tanpa markdown:
-            {"subject":"alien","action":"terbang","color":"#00FF00","body_type":"humanoid","features":["wings","antenna"],"environment":"space","weather":"stars","time_of_day":"night"}
+    suspend fun analyzePrompt(prompt: String): TemporalScene {
+        val system = """
+            Anda adalah ANIMATOR AI AHLI. Tugas: buat 5 KEYFRAME untuk animasi.
+
+            OUTPUT HANYA JSON VALID (tanpa markdown):
+            {
+              "environment": "space|ocean|forest|city|mountain|desert|cave|sky",
+              "weather": "rain|snow|stars|fire|none|sand",
+              "time": "day|night|sunset|dawn",
+              "sky_top": "#hex", "sky_bottom": "#hex",
+              "keyframes": [
+                {"time":0.0,"shapes":[
+                  {"id":"head","shape":"circle","x":50,"y":35,"w":20,"h":20,"rotation":0,"color":"#FF0000","layer":5},
+                  {"id":"body","shape":"ellipse","x":50,"y":60,"w":30,"h":25,"rotation":0,"color":"#FF0000","layer":4}
+                ]},
+                {"time":0.25,"shapes":[ SAMA ID TAPI POSISI/ROTASI BEDA ]},
+                {"time":0.5,"shapes":[...]},
+                {"time":0.75,"shapes":[...]},
+                {"time":1.0,"shapes":[...]}
+              ]
+            }
+
+            ATURAN PALING PENTING:
+            - SEMUA 5 keyframe HARUS memiliki ID yang SAMA PERSIS (karakter konsisten).
+            - Bedakan pose: misal "left_wing" punya rotation -30 di t=0, +30 di t=0.5, -30 di t=1.0.
+            - Untuk MATA berkedip: "eye_l" h=8 di t=0, h=1 di t=0.5 (kedip), h=8 di t=1.
+            - Untuk MULUT: bentuk arc berubah dari senyum ke buka ke senyum.
+            - Untuk BERJALAN: kaki bergantian maju-mundur (walk cycle).
+            - Untuk TERBANG: seluruh badan naik-turun (sin wave).
+            - Koordinat 0-100. (50,50)=tengah. Tanah=75. Terbang=30-45.
+            - WAJIB ada: kepala, badan, dan minimal 2 detail (mata, kaki, sayap, ekor).
+            - Bentuk harus jelas: NAGA=badan+sayap besar+ekor panjang+tanduk. 
+              ROBOT=kotak+kotak+kotak+antena+lampu mata. 
+              BURUNG=oval+2sayap+paruh+ekor. KUCING=badan+4kaki+kepala+2telinga+ekor.
+            - MINIMAL 15 bentuk per keyframe, MAKSIMAL 30.
+            - JANGAN lupa bentuk dekorasi latar di layer 0-1 (bintang, pohon, gunung).
         """.trimIndent()
 
-        val response = model.generateContent("$systemInstruction\n\nInput: $prompt")
-        val jsonText = response.text ?: throw Exception("AI tidak merespons")
+        val response = model.generateContent("$system\n\nPermintaan: $prompt")
+        val text = response.text ?: throw Exception("AI tidak merespons")
+        val clean = text.replace("```json","").replace("```","").trim()
+        val json = JSONObject(clean)
+        val kfArray = json.getJSONArray("keyframes")
+        val keyframes = mutableListOf<Keyframe>()
 
-        val cleanJson = jsonText.replace("```json", "").replace("```", "").trim()
-        val json = JSONObject(cleanJson)
-        
-        val featuresArray = json.optJSONArray("features")
-        val featuresList = mutableListOf<String>()
-        if (featuresArray != null) {
-            for (i in 0 until featuresArray.length()) {
-                featuresList.add(featuresArray.getString(i))
+        for (k in 0 until kfArray.length()) {
+            val kfJson = kfArray.getJSONObject(k)
+            val shapesJson = kfJson.getJSONArray("shapes")
+            val shapes = mutableListOf<DrawShape>()
+            for (i in 0 until shapesJson.length()) {
+                val s = shapesJson.getJSONObject(i)
+                shapes.add(DrawShape(
+                    id = s.optString("id", "shape_$i"),
+                    shape = s.optString("shape", "circle"),
+                    x = s.optDouble("x", 50.0).toFloat(),
+                    y = s.optDouble("y", 50.0).toFloat(),
+                    w = s.optDouble("w", 10.0).toFloat(),
+                    h = s.optDouble("h", 10.0).toFloat(),
+                    rotation = s.optDouble("rotation", 0.0).toFloat(),
+                    color = s.optString("color", "#FFFFFF"),
+                    layer = s.optInt("layer", 5)
+                ))
             }
+            keyframes.add(Keyframe(time = kfJson.optDouble("time", k/4.0).toFloat(), shapes = shapes))
         }
 
-        return ParsedScene(
-            subject = json.optString("subject", "makhluk"),
-            action = json.optString("action", "bergerak"),
-            colorHex = json.optString("color", "#FFFFFF"),
-            bodyType = json.optString("body_type", "abstract"),
-            features = featuresList,
-            environment = json.optString("environment", "sky"),
-            weather = json.optString("weather", "clear"),
-            timeOfDay = json.optString("time_of_day", "day")
+        keyframes.sortBy { it.time }
+
+        return TemporalScene(
+            prompt = prompt,
+            environment = json.optString("environment","sky"),
+            weather = json.optString("weather","none"),
+            time = json.optString("time","day"),
+            skyTop = json.optString("sky_top","#4A90E2"),
+            skyBottom = json.optString("sky_bottom","#B0E0E6"),
+            keyframes = keyframes
         )
     }
 }
