@@ -25,7 +25,6 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     androidResources { noCompress += listOf("tflite", "json") }
-    packaging { jniLibs { pickFirsts += listOf("**/libc++_shared.so") } }
 }
 
 dependencies {
@@ -33,12 +32,6 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
-    
-    // TFLite (jika nanti kita pakai model AI)
-    implementation("org.tensorflow:tensorflow-lite:2.16.1")
-    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
-    
-    // UI & Video Player
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-ui:1.3.1")
