@@ -13,6 +13,13 @@ android {
         versionCode = 1
         versionName = "1.0"
         ndk { abiFilters.addAll(listOf("arm64-v8a")) }
+        
+        // TAMBAHKAN API KEY GEMINI DI SINI
+        // Dapatkan API Key gratis di: https://aistudio.google.com/app/apikey
+        buildConfigField("String", "GEMINI_API_KEY", "\"MASUKKAN_API_KEY_ANDA_DI_SINI\"")
+    }
+    buildFeatures {
+        buildConfig = true
     }
     buildTypes {
         release {
@@ -35,4 +42,7 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-ui:1.3.1")
+    
+    // LIBRARY GEMINI AI (OTAK GLOBAL)
+    implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
 }
