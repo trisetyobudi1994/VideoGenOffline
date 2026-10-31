@@ -17,7 +17,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.videogen.offline.databinding.ActivityMainBinding
 import com.videogen.offline.engine.Mp4Writer
-import com.videogen.offline.engine.ProceduralMathEngine
+import com.videogen.offline.engine.ParticleEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -26,7 +26,7 @@ import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
-    private val TOTAL_FRAMES = 90 // 3 detik
+    private val TOTAL_FRAMES = 120 // 4 detik @ 30FPS
     private val FPS = 30
     private val W = 512
     private val H = 512
@@ -38,19 +38,18 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Sembunyikan tombol pilih gambar
+        // Sembunyikan pemilih gambar, ubah teks subtitle
         binding.btnPickImage.visibility = View.GONE
-        binding.tvSubtitle.text = "Neuro-Symbolic Engine (0 MB Model)"
+        binding.tvSubtitle.text = "Generative Particle Engine"
 
         binding.btnGenerate.setOnClickListener {
-            // Kita gunakan kotak dialog untuk input teks
             val input = EditText(this)
-            input.hint = "Ketik teks (contoh: fire, ocean, forest)"
+            input.hint = "Ketik ide video (misal: fire, water, galaxy)"
             AlertDialog.Builder(this)
-                .setTitle("Text to Video")
+                .setTitle("Text to Particle Video")
                 .setView(input)
-                .setPositiveButton("Buat") { _, _ ->
-                    val prompt = input.text.toString().ifEmpty { "ocean" }
+                .setPositiveButton("Buat Video") { _, _ ->
+                    val prompt = input.text.toString().ifEmpty { "fire" }
                     generateVideo(prompt)
                 }
                 .setNegativeButton("Batal", null)
@@ -61,19 +60,21 @@ class MainActivity : AppCompatActivity() {
     private fun generateVideo(prompt: String) {
         binding.loadingLayout.visibility = View.VISIBLE
         binding.btnGenerate.isEnabled = false
+        binding.tvLoadingText.text = "Merender Partikel..."
 
         lifecycleScope.launch {
             try {
                 val videoFile = withContext(Dispatchers.Default) {
-                    val outFile = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "Math_${System.currentTimeMillis()}.mp4")
-                    val engine = ProceduralMathEngine()
+                    val outFile = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "Particle_${System.currentTimeMillis()}.mp4")
                     
-                    // Ubah teks jadi parameter matematika
-                    val params = engine.textToParameters(prompt)
+                    // Inisialisasi Mesin Partikel
+                    val engine = ParticleEngine(W, H, prompt)
 
+                    // Render Frame-by-Frame dan simpan ke MP4
                     Mp4Writer(outFile, W, H, FPS).encode(TOTAL_FRAMES) { i ->
-                        val time = (i.toFloat() / FPS) * 2f // Waktu berjalan
-                        engine.generateFrame(W, H, params, time)
+                        // Waktu bergerak (semakin lama, partikel bergerak makin jauh)
+                        val time = (i.toFloat() / FPS) * 2.0f 
+                        engine.renderFrame(time)
                     }
 
                     saveToGallery(outFile)
@@ -108,7 +109,7 @@ class MainActivity : AppCompatActivity() {
         playerView.player = exoPlayer
 
         AlertDialog.Builder(this)
-            .setTitle("Video Matematika Berhasil!")
+            .setTitle("Video Berhasil Dibuat!")
             .setView(container)
             .setPositiveButton("Tutup") { _,_ -> exoPlayer?.release() }
             .setOnDismissListener { exoPlayer?.release() }
