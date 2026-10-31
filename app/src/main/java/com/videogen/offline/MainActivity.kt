@@ -14,8 +14,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import com.videogen.offline.engine.AdaptiveBrain
+import com.videogen.offline.engine.CreatureAnimator
 import com.videogen.offline.engine.Mp4Writer
-import com.videogen.offline.engine.SwarmEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -33,12 +34,12 @@ class MainActivity : AppCompatActivity() {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(48, 96, 48, 48); setBackgroundColor(Color.parseColor("#F8F9FA"))
         }
-        val title = TextView(this).apply { text = "Evolving Neural Swarm"; textSize = 24f; setTextColor(Color.BLACK); setPadding(0, 0, 0, 16) }
-        val subtitle = TextView(this).apply { text = "AI belajar & berevolusi secara mandiri"; textSize = 14f; setTextColor(Color.GRAY); setPadding(0, 0, 0, 32) }
-        promptInput = EditText(this).apply { hint = "Ketik ide (fire, water, galaxy)"; setPadding(24, 24, 24, 24) }
+        val title = TextView(this).apply { text = "Adaptive AI Brain"; textSize = 24f; setTextColor(Color.BLACK); setPadding(0, 0, 0, 16) }
+        val subtitle = TextView(this).apply { text = "AI yang belajar dari typo Anda"; textSize = 14f; setTextColor(Color.GRAY); setPadding(0, 0, 0, 32) }
+        promptInput = EditText(this).apply { hint = "Ketik (misal: kucing berlajan)"; setPadding(24, 24, 24, 24) }
         btnGenerate = Button(this).apply {
-            text = "Mulai Evolusi AI"
-            setOnClickListener { generateVideo(promptInput.text.toString().ifEmpty { "fire" }) }
+            text = "Buat Animasi"
+            setOnClickListener { generateVideo(promptInput.text.toString().ifEmpty { "kucing berjalan" }) }
         }
         progressBar = ProgressBar(this).apply { visibility = View.GONE; setPadding(0, 32, 0, 0) }
         layout.addView(title); layout.addView(subtitle); layout.addView(promptInput); layout.addView(btnGenerate); layout.addView(progressBar)
@@ -47,20 +48,29 @@ class MainActivity : AppCompatActivity() {
 
     private fun generateVideo(prompt: String) {
         btnGenerate.isEnabled = false; progressBar.visibility = View.VISIBLE
-        Toast.makeText(this, "AI Berevolusi...", Toast.LENGTH_SHORT).show()
         lifecycleScope.launch {
             try {
-                val videoFile = withContext(Dispatchers.Default) {
-                    val outFile = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "Swarm_${System.currentTimeMillis()}.mp4")
-                    val engine = SwarmEngine(W, H, prompt)
+                val result = withContext(Dispatchers.Default) {
+                    // 1. AI BERPIKIR & BELAJAR
+                    val brain = AdaptiveBrain(this@MainActivity)
+                    val scene = brain.parsePrompt(prompt)
+
+                    // Tampilkan hasil koreksi di Toast
+                    runOnUiThread { 
+                        Toast.makeText(this@MainActivity, "AI Menebak: ${scene.correctedText}", Toast.LENGTH_LONG).show() 
+                    }
+
+                    // 2. RENDER ANIMASI
+                    val outFile = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "Brain_${System.currentTimeMillis()}.mp4")
+                    val animator = CreatureAnimator(W, H, scene)
                     
                     Mp4Writer(outFile, W, H, FPS).encode(TOTAL_FRAMES) { i ->
-                        engine.renderFrame(i) // AI berpikir & berevolusi di sini
+                        animator.renderFrame(i.toFloat() / FPS)
                     }
                     saveToGallery(outFile); outFile
                 }
                 progressBar.visibility = View.GONE; btnGenerate.isEnabled = true
-                showResultDialog(videoFile)
+                showResultDialog(result)
             } catch (e: Throwable) {
                 progressBar.visibility = View.GONE; btnGenerate.isEnabled = true
                 showDialog("GAGAL", e.toString())
@@ -76,7 +86,7 @@ class MainActivity : AppCompatActivity() {
             setMediaItem(MediaItem.fromUri(Uri.fromFile(file))); prepare(); playWhenReady = true
         }
         playerView.player = exoPlayer
-        AlertDialog.Builder(this).setTitle("Video AI Berhasil!").setView(container)
+        AlertDialog.Builder(this).setTitle("Animasi Berhasil!").setView(container)
             .setPositiveButton("Tutup") { _,_ -> exoPlayer?.release() }
             .setOnDismissListener { exoPlayer?.release() }.show()
     }
