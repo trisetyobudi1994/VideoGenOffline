@@ -51,7 +51,7 @@ class MainActivity : AppCompatActivity() {
             setTypeface(null, android.graphics.Typeface.BOLD); setPadding(0,0,0,8)
         }
         val subtitle = TextView(this).apply {
-            text = "AI mendesain 5 keyframe & mengingat karakternya"
+            text = "AI desain 5 keyframe & ingat karakter"
             textSize = 12f; setTextColor(Color.parseColor("#8B949E")); setPadding(0,0,0,32)
         }
         promptInput = EditText(this).apply {
@@ -87,7 +87,6 @@ class MainActivity : AppCompatActivity() {
             try {
                 val memory = CharacterMemory(this@MainActivity)
                 val cached = memory.load(prompt)
-                
                 val scene = if (cached != null) {
                     runOnUiThread { statusText.text = "🧠 Dimuat dari memori (karakter sama persis)" }
                     cached
@@ -99,7 +98,6 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread { statusText.text = "✅ ${s.keyframes.size} keyframe tersimpan di memori" }
                     s
                 }
-                
                 currentScene = scene
                 renderScene(scene)
             } catch (e: Throwable) {
@@ -115,7 +113,6 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 runOnUiThread { statusText.text = "🔄 AI mempelajari karakter sebelumnya..." }
-                // AI melihat keyframe lama, buat versi baru dengan prompt berbeda
                 val brain = GeminiBrain(BuildConfig.GEMINI_API_KEY)
                 val newPrompt = "${scene.prompt} versi evolusi berbeda pose dan gerakan"
                 val newScene = brain.analyzePrompt(newPrompt)

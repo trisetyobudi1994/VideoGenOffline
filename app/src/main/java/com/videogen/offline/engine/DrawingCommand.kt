@@ -1,17 +1,17 @@
 package com.videogen.offline.engine
 
 data class DrawShape(
-    val id: String,           // Nama unik: "head", "left_wing", "body", "eye_l"
-    val shape: String,        // circle, ellipse, rect, triangle, polygon, line, arc
+    val id: String,
+    val shape: String,
     val x: Float, val y: Float,
     val w: Float, val h: Float,
-    val rotation: Float,      // derajat
+    val rotation: Float,
     val color: String,
     val layer: Int
 )
 
 data class Keyframe(
-    val time: Float,          // 0.0 - 1.0
+    val time: Float,
     val shapes: List<DrawShape>
 )
 

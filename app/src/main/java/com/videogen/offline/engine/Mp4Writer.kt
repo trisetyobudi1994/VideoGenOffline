@@ -20,7 +20,6 @@ class Mp4Writer(private val outputFile: File, private val width: Int, private va
         val muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
         var track = -1; var started = false
         val info = MediaCodec.BufferInfo()
-
         fun drain(untilEos: Boolean) {
             while (true) {
                 val idx = codec.dequeueOutputBuffer(info, 10_000)
@@ -39,7 +38,6 @@ class Mp4Writer(private val outputFile: File, private val width: Int, private va
                 }
             }
         }
-
         try {
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             codec.start()

@@ -4,7 +4,6 @@ import android.graphics.*
 import kotlin.random.Random
 
 class TemporalRenderer(private val w: Int, private val h: Int) {
-    
     private val stars = List(120) { Triple(Random.nextFloat()*w, Random.nextFloat()*h*0.7f, Random.nextFloat()*2f+0.5f) }
     private val rainDrops = List(200) { Triple(Random.nextFloat()*w, Random.nextFloat()*h, Random.nextFloat()*10f+15f) }
 
@@ -12,35 +11,18 @@ class TemporalRenderer(private val w: Int, private val h: Int) {
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
         val time = frameCount / 30f
-
-        // 1. LANGIT
         drawSky(canvas, scene)
-
-        // 2. BINTANG / MATAHARI
         drawBackground(canvas, scene, time)
-
-        // 3. INTERPOLASI KARAKTER
         val shapes = interpolateShapes(scene, timeNorm)
-        val sorted = shapes.sortedBy { it.layer }
-        for (shape in sorted) drawShape(canvas, shape)
-
-        // 4. CUACA
+        for (shape in shapes.sortedBy { it.layer }) drawShape(canvas, shape)
         drawWeather(canvas, scene, time)
-
-        // 5. VIGNETTE
         drawVignette(canvas)
         return bmp
     }
 
-    /**
-     * INTI: Interpolasi antara 2 keyframe terdekat.
-     * Bentuk dengan ID sama akan di-blend posisinya.
-     */
     private fun interpolateShapes(scene: TemporalScene, t: Float): List<DrawShape> {
         if (scene.keyframes.isEmpty()) return emptyList()
         if (scene.keyframes.size == 1) return scene.keyframes[0].shapes
-
-        // Cari kf0 (sebelum t) dan kf1 (setelah t)
         var kf0 = scene.keyframes[0]
         var kf1 = scene.keyframes.last()
         for (i in 0 until scene.keyframes.size - 1) {
@@ -48,21 +30,16 @@ class TemporalRenderer(private val w: Int, private val h: Int) {
                 kf0 = scene.keyframes[i]; kf1 = scene.keyframes[i+1]; break
             }
         }
-
         val span = kf1.time - kf0.time
         val localT = if (span < 0.001f) 0f else ((t - kf0.time) / span).coerceIn(0f, 1f)
-
         val result = mutableListOf<DrawShape>()
-        val shapeMap0 = kf0.shapes.associateBy { it.id }
-        val shapeMap1 = kf1.shapes.associateBy { it.id }
-
-        for (id in shapeMap0.keys) {
-            val s0 = shapeMap0[id] ?: continue
-            val s1 = shapeMap1[id] ?: s0  // Jika hilang di kf1, pakai kf0
-
+        val map0 = kf0.shapes.associateBy { it.id }
+        val map1 = kf1.shapes.associateBy { it.id }
+        for (id in map0.keys) {
+            val s0 = map0[id] ?: continue
+            val s1 = map1[id] ?: s0
             result.add(DrawShape(
-                id = id,
-                shape = s0.shape,
+                id = id, shape = s0.shape,
                 x = lerp(s0.x, s1.x, localT),
                 y = lerp(s0.y, s1.y, localT),
                 w = lerp(s0.w, s1.w, localT),
@@ -75,12 +52,11 @@ class TemporalRenderer(private val w: Int, private val h: Int) {
         return result
     }
 
-    private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
+    private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
 
     private fun blendColor(c0: String, c1: String, t: Float): String {
         return try {
-            val a = Color.parseColor(c0)
-            val b = Color.parseColor(c1)
+            val a = Color.parseColor(c0); val b = Color.parseColor(c1)
             String.format("#%02X%02X%02X",
                 (Color.red(a) + (Color.red(b)-Color.red(a))*t).toInt().coerceIn(0,255),
                 (Color.green(a) + (Color.green(b)-Color.green(a))*t).toInt().coerceIn(0,255),
@@ -122,7 +98,6 @@ class TemporalRenderer(private val w: Int, private val h: Int) {
         val paint = Paint().apply { isAntiAlias = true; color = safeColor(s.color, Color.WHITE) }
         val cx = s.x/100f*w; val cy = s.y/100f*h
         val sw = s.w/100f*w; val sh = s.h/100f*h
-
         canvas.save()
         canvas.rotate(s.rotation, cx, cy)
         when (s.shape) {
@@ -158,7 +133,7 @@ class TemporalRenderer(private val w: Int, private val h: Int) {
             }
             "snow" -> {
                 paint.color = Color.WHITE
-                for ((x,y,spd) in rainDrops.take(100)) {
+                for ((x,y,_) in rainDrops.take(100)) {
                     val sy = (y + time*40f) % h
                     val sx = x + kotlin.math.sin(time*1.5f+x*0.01f)*10f
                     paint.alpha = (150+kotlin.math.sin(time+x)*100).toInt().coerceIn(0,255)
