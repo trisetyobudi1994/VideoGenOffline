@@ -1,15 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <!-- IZIN INTERNET UNTUK MENGUNDUH MODEL -->
     <uses-permission android:name="android.permission.INTERNET" />
-
     <application
         android:allowBackup="true"
         android:label="VideoGenOffline"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
-        android:largeHeap="true"> <!-- IZIN RAM BESAR -->
-        
+        android:largeHeap="true"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true">

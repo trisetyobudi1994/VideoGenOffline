@@ -14,11 +14,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
-import com.videogen.offline.engine.CharacterMemory
-import com.videogen.offline.engine.GeminiBrain
+import com.videogen.offline.engine.CinematicAnimator
+import com.videogen.offline.engine.ImageFetcher
 import com.videogen.offline.engine.Mp4Writer
-import com.videogen.offline.engine.TemporalRenderer
-import com.videogen.offline.engine.TemporalScene
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -27,14 +25,12 @@ import java.io.File
 class MainActivity : AppCompatActivity() {
     private val TOTAL_FRAMES = 150
     private val FPS = 30
-    private val W = 720
-    private val H = 720
+    private val W = 768
+    private val H = 768
 
     private var exoPlayer: ExoPlayer? = null
-    private var currentScene: TemporalScene? = null
     private lateinit var promptInput: EditText
     private lateinit var btnGenerate: Button
-    private lateinit var btnEvolve: Button
     private lateinit var progressBar: ProgressBar
     private lateinit var statusText: TextView
 
@@ -46,143 +42,101 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#0D1117"))
         }
         val title = TextView(this).apply {
-            text = "🎬 Temporal AI Animator"
-            textSize = 26f
-            setTextColor(Color.WHITE)
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            setPadding(0, 0, 0, 8)
+            text = "🎬 Cinematic AI Generator"
+            textSize = 24f; setTextColor(Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD); setPadding(0,0,0,8)
         }
         val subtitle = TextView(this).apply {
-            text = "Ketik prompt, AI akan melukis & mengingat karakter"
-            textSize = 12f
-            setTextColor(Color.parseColor("#8B949E"))
-            setPadding(0, 0, 0, 32)
+            text = "Gambar AI Nyata + Animasi Sinematik + Efek Cuaca"
+            textSize = 12f; setTextColor(Color.parseColor("#8B949E")); setPadding(0,0,0,32)
         }
         promptInput = EditText(this).apply {
-            hint = "Contoh: naga merah terbang di gunung"
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.parseColor("#8B949E"))
-            setPadding(24, 24, 24, 24)
+            hint = "Contoh: naga merah terbang di gunung saat sunset"
+            setTextColor(Color.WHITE); setHintTextColor(Color.parseColor("#8B949E"))
+            setPadding(24,24,24,24)
         }
         statusText = TextView(this).apply {
-            text = ""
-            textSize = 12f
-            setTextColor(Color.parseColor("#4ECDC4"))
-            setPadding(0, 8, 0, 8)
+            text = ""; textSize = 12f; setTextColor(Color.parseColor("#4ECDC4"))
+            setPadding(0,8,0,8)
         }
         btnGenerate = Button(this).apply {
-            text = "✨ Generate / Muat dari Memori"
+            text = "✨ Generate Cinematic Video"
             setOnClickListener {
-                generate(promptInput.text.toString().ifEmpty { "naga terbang" })
+                generate(promptInput.text.toString().ifEmpty { "cinematic mountain landscape at sunset" })
             }
         }
-        btnEvolve = Button(this).apply {
-            text = "🔄 Evolve (AI Lihat Sebelumnya)"
-            setBackgroundColor(Color.parseColor("#6200EE"))
-            setTextColor(Color.WHITE)
-            setOnClickListener { evolve() }
-        }
-        progressBar = ProgressBar(this).apply {
-            visibility = View.GONE
-            setPadding(0, 32, 0, 0)
-        }
+        progressBar = ProgressBar(this).apply { visibility = View.GONE; setPadding(0,32,0,0) }
 
-        layout.addView(title)
-        layout.addView(subtitle)
-        layout.addView(promptInput)
-        layout.addView(statusText)
-        layout.addView(btnGenerate)
-        layout.addView(btnEvolve)
-        layout.addView(progressBar)
+        layout.addView(title); layout.addView(subtitle)
+        layout.addView(promptInput); layout.addView(statusText)
+        layout.addView(btnGenerate); layout.addView(progressBar)
         setContentView(layout)
     }
 
     private fun generate(prompt: String) {
         btnGenerate.isEnabled = false
         progressBar.visibility = View.VISIBLE
+        statusText.text = "🎨 AI sedang melukis gambar..."
+
         lifecycleScope.launch {
             try {
-                val memory = CharacterMemory(this@MainActivity)
-                val cached = memory.load(prompt)
-                val scene = if (cached != null) {
-                    runOnUiThread { statusText.text = "🧠 Dimuat dari memori (karakter sama persis)" }
-                    cached
-                } else {
-                    runOnUiThread { statusText.text = "🎨 AI mendesain keyframe baru..." }
-                    val brain = GeminiBrain(BuildConfig.GEMINI_API_KEY)
-                    val s = brain.analyzePrompt(prompt)
-                    memory.save(s)
-                    runOnUiThread { statusText.text = "✅ ${s.keyframes.size} keyframe tersimpan di memori" }
-                    s
+                val result = withContext(Dispatchers.Default) {
+                    // 1. Ambil gambar AI sungguhan
+                    val image = ImageFetcher().fetchImage(prompt)
+                    runOnUiThread { statusText.text = "🎬 Animasi sinematik..." }
+
+                    // 2. Tentukan cuaca & waktu dari prompt
+                    val lp = prompt.lowercase()
+                    val weather = when {
+                        lp.contains("rain") || lp.contains("hujan") -> "rain"
+                        lp.contains("snow") || lp.contains("salju") -> "snow"
+                        lp.contains("fire") || lp.contains("api") -> "fire"
+                        lp.contains("star") || lp.contains("bintang") || lp.contains("malam") -> "stars"
+                        else -> "none"
+                    }
+                    val tod = when {
+                        lp.contains("night") || lp.contains("malam") -> "night"
+                        lp.contains("sunset") || lp.contains("senja") -> "sunset"
+                        lp.contains("dawn") || lp.contains("subuh") -> "dawn"
+                        else -> "day"
+                    }
+
+                    // 3. Render sinematik
+                    val outFile = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES),
+                        "Cinematic_${System.currentTimeMillis()}.mp4")
+                    val animator = CinematicAnimator(image, W, H, weather, tod)
+                    Mp4Writer(outFile, W, H, FPS).encode(TOTAL_FRAMES) { i ->
+                        animator.renderFrame(i, TOTAL_FRAMES)
+                    }
+                    saveToGallery(outFile)
+                    outFile
                 }
-                currentScene = scene
-                renderScene(scene)
+                progressBar.visibility = View.GONE
+                btnGenerate.isEnabled = true
+                statusText.text = "✅ Video sinematik selesai!"
+                showResult(result)
             } catch (e: Throwable) {
                 progressBar.visibility = View.GONE
                 btnGenerate.isEnabled = true
+                statusText.text = "❌ ${e.message}"
                 showDialog("GAGAL", e.message ?: "error")
             }
         }
-    }
-
-    private fun evolve() {
-        val scene = currentScene ?: return showDialog("Info", "Generate dulu!")
-        btnEvolve.isEnabled = false
-        progressBar.visibility = View.VISIBLE
-        lifecycleScope.launch {
-            try {
-                runOnUiThread { statusText.text = "🔄 AI mempelajari karakter sebelumnya..." }
-                val brain = GeminiBrain(BuildConfig.GEMINI_API_KEY)
-                val newPrompt = "${scene.prompt} versi evolusi berbeda pose dan gerakan"
-                val newScene = brain.analyzePrompt(newPrompt)
-                CharacterMemory(this@MainActivity).save(newScene)
-                currentScene = newScene
-                runOnUiThread { statusText.text = "✨ Evolusi selesai!" }
-                renderScene(newScene)
-            } catch (e: Throwable) {
-                progressBar.visibility = View.GONE
-                btnEvolve.isEnabled = true
-                showDialog("GAGAL", e.message ?: "error")
-            }
-        }
-    }
-
-    private suspend fun renderScene(scene: TemporalScene) {
-        val file = withContext(Dispatchers.Default) {
-            val f = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "Temporal_${System.currentTimeMillis()}.mp4")
-            val renderer = TemporalRenderer(W, H)
-            Mp4Writer(f, W, H, FPS).encode(TOTAL_FRAMES) { i ->
-                renderer.renderFrame(scene, i.toFloat() / TOTAL_FRAMES, i)
-            }
-            saveToGallery(f)
-            f
-        }
-        progressBar.visibility = View.GONE
-        btnGenerate.isEnabled = true
-        btnEvolve.isEnabled = true
-        showResult(file)
     }
 
     private fun showResult(file: File) {
         val pv = PlayerView(this)
         pv.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 900)
-        val c = LinearLayout(this).apply {
-            addView(pv)
-            setPadding(16, 16, 16, 16)
-        }
+        val c = LinearLayout(this).apply { addView(pv); setPadding(16,16,16,16) }
         exoPlayer = ExoPlayer.Builder(this).build().apply {
             setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
-            prepare()
-            playWhenReady = true
-            repeatMode = ExoPlayer.REPEAT_MODE_ALL
+            prepare(); playWhenReady = true; repeatMode = ExoPlayer.REPEAT_MODE_ALL
         }
         pv.player = exoPlayer
-        AlertDialog.Builder(this)
-            .setTitle("🎉 Animasi Berhasil!")
+        AlertDialog.Builder(this).setTitle("🎉 Video Cinematic Berhasil!")
             .setView(c)
-            .setPositiveButton("Tutup") { _, _ -> exoPlayer?.release() }
-            .setOnDismissListener { exoPlayer?.release() }
-            .show()
+            .setPositiveButton("Tutup") { _,_ -> exoPlayer?.release() }
+            .setOnDismissListener { exoPlayer?.release() }.show()
     }
 
     private fun saveToGallery(file: File) {
