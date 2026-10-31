@@ -3,27 +3,22 @@ package com.videogen.offline
 import android.content.ContentValues
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Path
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
-import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.View
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.TextView
+import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import com.videogen.offline.engine.DepthEstimator
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import com.videogen.offline.engine.AutoregressiveGenerator
+import com.videogen.offline.engine.MotionPredictor
 import com.videogen.offline.engine.Mp4Writer
-import com.videogen.offline.engine.ParallaxRenderer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,189 +26,136 @@ import java.io.File
 import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity() {
-
-    private val MODEL_PATH = "models/midas_v2.tflite"
     private val TOTAL_FRAMES = 60
     private val FPS = 30
+    private val UPSCALE_WIDTH = 720 // Resolusi HD
 
     private var selectedPhoto: Bitmap? = null
-    private lateinit var btnPick: Button
+    private lateinit var imagePreview: ImageView
+    private var exoPlayer: ExoPlayer? = null
 
     private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
-            try {
-                val bmp = loadScaled(uri)
-                selectedPhoto = bmp
-                btnPick.text = "1. Foto dipilih (${bmp.width}x${bmp.height}) - ganti"
-            } catch (e: Throwable) {
-                showDialog("Gagal membaca foto", e.toString())
-            }
+            selectedPhoto = loadScaled(uri)
+            imagePreview.setImageBitmap(selectedPhoto)
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 96, 48, 48)
+        }
 
-        val layout = LinearLayout(this)
-        layout.orientation = LinearLayout.VERTICAL
-        layout.setPadding(48, 96, 48, 48)
-
-        val title = TextView(this)
-        title.text = "VideoGenOffline — Parallax 2.5D"
-        title.textSize = 18f
-
-        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
-        progress.max = 100
-        progress.visibility = View.GONE
-
-        btnPick = Button(this)
-        btnPick.text = "1. Pilih foto (disarankan, bukan gambar dummy)"
-        btnPick.setOnClickListener { pickImage.launch("image/*") }
-
-        val btnGenerate = Button(this)
-        btnGenerate.text = "2. BUAT VIDEO PARALLAX"
-        btnGenerate.setOnClickListener {
-            btnGenerate.isEnabled = false
-            progress.visibility = View.VISIBLE
-            progress.progress = 0
-
-            lifecycleScope.launch {
-                try {
-                    val report = withContext(Dispatchers.Default) {
-                        val t0 = SystemClock.elapsedRealtime()
-
-                        runOnUiThread { progress.progress = 10; btnGenerate.text = "Menyiapkan gambar..." }
-                        val base = selectedPhoto ?: createDummyLandscape(512, 512)
-
-                        runOnUiThread { progress.progress = 25; btnGenerate.text = "Menganalisis kedalaman..." }
-                        val tDepth0 = SystemClock.elapsedRealtime()
-                        val estimator = DepthEstimator(this@MainActivity, MODEL_PATH)
-                        val modelInfo = estimator.inputInfo()
-                        val depth = try { estimator.estimateDepth(base) } finally { estimator.close() }
-                        val depthMs = SystemClock.elapsedRealtime() - tDepth0
-
-                        val previewFile = File(
-                            getExternalFilesDir(Environment.DIRECTORY_PICTURES),
-                            "depth_preview.png"
-                        )
-                        saveDepthPreview(depth.values, depth.width, depth.height, previewFile)
-
-                        runOnUiThread { progress.progress = 50; btnGenerate.text = "Merender & encode..." }
-                        val renderer = ParallaxRenderer(base, depth)
-                        val videoFile = File(
-                            getExternalFilesDir(Environment.DIRECTORY_MOVIES),
-                            "Parallax_${System.currentTimeMillis()}.mp4"
-                        )
-                        val tEnc0 = SystemClock.elapsedRealtime()
-                        Mp4Writer(videoFile, base.width, base.height, FPS).encode(TOTAL_FRAMES) { i ->
-                            renderer.renderFrame(i, TOTAL_FRAMES)
-                        }
-                        val encMs = SystemClock.elapsedRealtime() - tEnc0
-
-                        val galleryPath = saveToGallery(videoFile)
-                        val totalMs = SystemClock.elapsedRealtime() - t0
-
-                        "Video: ${videoFile.length() / 1024} KB, ${TOTAL_FRAMES} frame @ ${FPS} fps\n" +
-                            "Ukuran: ${base.width}x${base.height}\n\n" +
-                            "Model: $modelInfo\n" +
-                            "Rentang kedalaman mentah: ${depth.rawMin} .. ${depth.rawMax}\n\n" +
-                            "Waktu kedalaman: ${depthMs / 1000.0} dtk\n" +
-                            "Waktu render+encode: ${encMs / 1000.0} dtk\n" +
-                            "Total: ${totalMs / 1000.0} dtk\n\n" +
-                            "Galeri: $galleryPath\n" +
-                            "Pratinjau kedalaman: ${previewFile.absolutePath}"
-                    }
-
-                    showDialog("Sukses", report)
-                } catch (e: Throwable) {
-                    showDialog("GAGAL", e.toString())
-                } finally {
-                    btnGenerate.text = "2. BUAT VIDEO PARALLAX"
-                    btnGenerate.isEnabled = true
-                    progress.visibility = View.GONE
-                }
-            }
+        val title = TextView(this).apply { text = "Autoregressive AI Video"; textSize = 22f }
+        imagePreview = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 600)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            setImageResource(android.R.drawable.ic_menu_gallery)
+        }
+        val btnPick = Button(this).apply {
+            text = "1. Pilih Foto"
+            setOnClickListener { pickImage.launch("image/*") }
+        }
+        val btnGenerate = Button(this).apply {
+            text = "2. BUAT VIDEO (Frame-by-Frame)"
+            setOnClickListener { generateVideo() }
         }
 
         layout.addView(title)
+        layout.addView(imagePreview)
         layout.addView(btnPick)
         layout.addView(btnGenerate)
-        layout.addView(progress)
         setContentView(layout)
     }
 
-    private fun loadScaled(uri: Uri): Bitmap {
-        val bounds = BitmapFactory.Options()
-        bounds.inJustDecodeBounds = true
-        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+    private fun generateVideo() {
+        val base = selectedPhoto ?: return showDialog("Error", "Pilih foto dulu!")
+        val progress = ProgressBar(this).apply { visibility = View.VISIBLE }
+        (window.decorView as android.view.ViewGroup).addView(progress)
 
-        var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 1024) sample *= 2
-        val opts = BitmapFactory.Options()
-        opts.inSampleSize = sample
-        val raw = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
-            ?: throw IllegalStateException("Foto tidak bisa dibaca")
+        lifecycleScope.launch {
+            try {
+                val videoFile = withContext(Dispatchers.Default) {
+                    val outFile = File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), "AI_${System.currentTimeMillis()}.mp4")
+                    val predictor = MotionPredictor(this@MainActivity, "models/flownet.tflite")
+                    val generator = AutoregressiveGenerator(predictor)
 
-        val scale = minOf(1f, 512f / maxOf(raw.width, raw.height))
-        var w = (raw.width * scale).toInt()
-        var h = (raw.height * scale).toInt()
-        w = maxOf(2, (w / 2) * 2)
-        h = maxOf(2, (h / 2) * 2)
-        return Bitmap.createScaledBitmap(raw, w, h, true)
-    }
+                    val framesDir = File(cacheDir, "frames")
+                    if (framesDir.exists()) framesDir.deleteRecursively()
+                    framesDir.mkdirs()
 
-    private fun saveDepthPreview(values: FloatArray, w: Int, h: Int, file: File) {
-        val px = IntArray(w * h) {
-            val g = (values[it] * 255f).toInt().coerceIn(0, 255)
-            (0xFF shl 24) or (g shl 16) or (g shl 8) or g
+                    var currentFrame = base
+                    val frameFiles = mutableListOf<File>()
+
+                    // LOOP FRAME-BY-FRAME (Simpan ke disk untuk hemat RAM)
+                    for (i in 0 until TOTAL_FRAMES) {
+                        runOnUiThread { progress.progress = ((i.toFloat() / TOTAL_FRAMES) * 100).toInt() }
+                        currentFrame = generator.generateNextFrame(currentFrame, i.toFloat() / TOTAL_FRAMES)
+                        
+                        val frameFile = File(framesDir, "frame_$i.jpg")
+                        FileOutputStream(frameFile).use { out -> currentFrame.compress(Bitmap.CompressFormat.JPEG, 90, out) }
+                        frameFiles.add(frameFile)
+                    }
+
+                    predictor.close()
+
+                    // GABUNG & UPSCALE KE MP4
+                    runOnUiThread { progress.progress = 90 }
+                    val firstFrame = BitmapFactory.decodeFile(frameFiles.first().absolutePath)
+                    val upscaledHeight = (firstFrame.height * (UPSCALE_WIDTH.toFloat() / firstFrame.width)).toInt()
+
+                    Mp4Writer(outFile, UPSCALE_WIDTH, upscaledHeight, FPS).encode(TOTAL_FRAMES) { i ->
+                        val frame = BitmapFactory.decodeFile(frameFiles[i].absolutePath)
+                        generator.upscale(frame, UPSCALE_WIDTH)
+                    }
+
+                    framesDir.deleteRecursively()
+                    saveToGallery(outFile)
+                    outFile
+                }
+                progress.visibility = View.GONE
+                showResultDialog(videoFile)
+            } catch (e: Throwable) {
+                progress.visibility = View.GONE
+                showDialog("GAGAL", e.toString())
+            }
         }
-        val bmp = Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
-        FileOutputStream(file).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
-    private fun saveToGallery(file: File): String {
-        val values = ContentValues()
-        values.put(MediaStore.Video.Media.DISPLAY_NAME, file.name)
-        values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-        values.put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/VideoGen")
+    private fun showResultDialog(file: File) {
+        val dialogView = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val playerView = PlayerView(this)
+        playerView.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 800)
+        dialogView.addView(playerView)
+        exoPlayer = ExoPlayer.Builder(this).build().apply {
+            setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
+            prepare(); playWhenReady = true
+        }
+        playerView.player = exoPlayer
+        AlertDialog.Builder(this).setTitle("Video Berhasil! (Tersimpan di Galeri)").setView(dialogView)
+            .setPositiveButton("Tutup") { _,_ -> exoPlayer?.release() }.show()
+    }
+
+    private fun saveToGallery(file: File) {
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, file.name)
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/VideoGen")
+        }
         val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-            ?: return "gagal menyalin ke galeri"
-        contentResolver.openOutputStream(uri)?.use { out ->
-            file.inputStream().use { it.copyTo(out) }
-        }
-        return "Movies/VideoGen/${file.name}"
+        contentResolver.openOutputStream(uri!!)?.use { out -> file.inputStream().use { it.copyTo(out) } }
     }
 
-    private fun createDummyLandscape(width: Int, height: Int): Bitmap {
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        val paint = Paint()
-
-        paint.color = Color.parseColor("#87CEEB")
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
-
-        paint.color = Color.YELLOW
-        canvas.drawCircle(width * 0.8f, height * 0.2f, 50f, paint)
-
-        paint.color = Color.parseColor("#8B4513")
-        val path = Path()
-        path.moveTo(width * 0.1f, height * 0.7f)
-        path.lineTo(width * 0.5f, height * 0.2f)
-        path.lineTo(width * 0.9f, height * 0.7f)
-        path.close()
-        canvas.drawPath(path, paint)
-
-        paint.color = Color.parseColor("#228B22")
-        canvas.drawRect(0f, height * 0.7f, width.toFloat(), height.toFloat(), paint)
-
-        return bitmap
+    private fun loadScaled(uri: Uri): Bitmap {
+        val opts = BitmapFactory.Options()
+        val raw = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }!!
+        val scale = minOf(1f, 512f / maxOf(raw.width, raw.height))
+        return Bitmap.createScaledBitmap(raw, (raw.width * scale).toInt(), (raw.height * scale).toInt(), true)
     }
 
     private fun showDialog(title: String, message: String) {
-        AlertDialog.Builder(this)
-            .setTitle(title)
-            .setMessage(message)
-            .setPositiveButton("OK", null)
-            .show()
+        AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("OK", null).show()
     }
 }
